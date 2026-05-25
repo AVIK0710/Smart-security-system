@@ -21,6 +21,8 @@ from .scene_schemas import SceneCreate
 from .rule_schemas import RuleCreate
 from .websocket_manager import manager
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 
 app = FastAPI()
@@ -755,3 +757,8 @@ async def test_broadcast():
     })
 
     return {"message": "Broadcast sent"}
+
+
+_frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")

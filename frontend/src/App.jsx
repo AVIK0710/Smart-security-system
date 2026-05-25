@@ -1,0 +1,47 @@
+import Sidebar from "./components/Sidebar.jsx";
+import Toast from "./components/Toast.jsx";
+import Topbar from "./components/Topbar.jsx";
+import { AppProvider, useApp } from "./context/AppContext.jsx";
+import AccessView from "./views/AccessView.jsx";
+import DevicesView from "./views/DevicesView.jsx";
+import EnergyView from "./views/EnergyView.jsx";
+import OverviewView from "./views/OverviewView.jsx";
+import RoomsView from "./views/RoomsView.jsx";
+import SchedulesView from "./views/SchedulesView.jsx";
+import SecurityView from "./views/SecurityView.jsx";
+import SettingsView from "./views/SettingsView.jsx";
+
+const VIEWS = {
+  overview: OverviewView,
+  rooms: RoomsView,
+  devices: DevicesView,
+  energy: EnergyView,
+  security: SecurityView,
+  schedules: SchedulesView,
+  settings: SettingsView,
+  access: AccessView,
+};
+
+function Dashboard() {
+  const { currentView } = useApp();
+  const View = VIEWS[currentView] || OverviewView;
+
+  return (
+    <div className="app-shell">
+      <Sidebar />
+      <main className="main">
+        <Topbar />
+        <View />
+      </main>
+      <Toast />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AppProvider>
+      <Dashboard />
+    </AppProvider>
+  );
+}
