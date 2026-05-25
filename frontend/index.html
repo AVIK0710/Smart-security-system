@@ -1,0 +1,518 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Smart Home Dashboard</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #111827;
+        color: white;
+        margin: 0;
+        padding: 20px;
+      }
+
+      h1,
+      h2 {
+        margin-bottom: 10px;
+      }
+
+      .login-box,
+      .section {
+        background: #1f2937;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+
+      input,
+      button,
+      select {
+        padding: 10px;
+        margin: 5px;
+        border-radius: 8px;
+        border: none;
+      }
+
+      button {
+        cursor: pointer;
+        background: #2563eb;
+        color: white;
+      }
+
+      .device-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 15px;
+      }
+
+      .card {
+        background: #374151;
+        padding: 15px;
+        border-radius: 12px;
+      }
+
+      .online {
+        color: #22c55e;
+        font-weight: bold;
+      }
+
+      .offline {
+        color: #ef4444;
+        font-weight: bold;
+      }
+
+      .event-log {
+        max-height: 250px;
+        overflow-y: auto;
+        background: #030712;
+        padding: 10px;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+
+      .event-item {
+        border-bottom: 1px solid #374151;
+        padding: 6px 0;
+      }
+
+      canvas {
+        background: white;
+        border-radius: 12px;
+        padding: 10px;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Smart Home Live Dashboard</h1>
+
+    <div class="login-box">
+      <h2>Login</h2>
+      <input id="username" placeholder="Username" />
+      <input id="password" placeholder="Password" type="password" />
+      <button onclick="login()">Login</button>
+      <p id="loginStatus">Not logged in</p>
+    </div>
+
+    <div class="section">
+      <h2>Devices</h2>
+      <button onclick="loadDevices()">Refresh Devices</button>
+      <div id="devices" class="device-grid"></div>
+    </div>
+
+    <div class="section">
+      <h2>Dashboard</h2>
+      <button onclick="loadDashboard()">Refresh Dashboard</button>
+      <div id="dashboard"></div>
+    </div>
+
+    <div class="section">
+      <h2>Telemetry Graphs</h2>
+
+      <label>Select Device:</label>
+      <select id="telemetryDeviceSelect"></select>
+
+      <button onclick="loadTelemetryHistory()">Load Telemetry History</button>
+
+      <canvas id="temperatureChart"></canvas>
+      <canvas id="humidityChart"></canvas>
+    </div>
+
+    <div class="section">
+      <h2>Motion Events</h2>
+      <div id="motionEvents" class="event-log"></div>
+    </div>
+
+    <div class="section">
+      <h2>Live Events</h2>
+      <div id="events" class="event-log"></div>
+    </div>
+
+    <script>
+      const API_BASE = "http://127.0.0.1:8000";
+      const WS_URL = "ws://127.0.0.1:8000/ws";
+
+      let token = localStorage.getItem("token") || null;
+      let socket = null;
+      let allDevices = [];
+
+      let temperatureChart = null;
+      let humidityChart = null;
+
+      if (token) {
+        document.getElementById("loginStatus").innerText =
+          "Token loaded from browser storage";
+        initializeCharts();
+        connectWebSocket();
+        loadDevices();
+        loadDashboard();
+      } else {
+        initializeCharts();
+      }
+
+      async function login() {
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+
+        const formData = new URLSearchParams();
+        formData.append("username", username);
+        formData.append("password", password);
+
+        const response = await fetch(`${API_BASE}/login`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: formData,
+        });
+
+        if (!response.ok) {
+          document.getElementById("loginStatus").innerText = "Login failed";
+          return;
+        }
+
+        const data = await response.json();
+        token = data.access_token;
+        localStorage.setItem("token", token);
+
+        document.getElementById("loginStatus").innerText =
+          "Logged in successfully";
+
+        connectWebSocket();
+        loadDevices();
+        loadDashboard();
+      }
+
+      function authHeaders() {
+        return {
+          Authorization: `Bearer ${token}`,
+        };
+      }
+
+      async function loadDevices() {
+        if (!token) {
+          alert("Login first");
+          return;
+        }
+
+        const response = await fetch(`${API_BASE}/devices`, {
+          headers: authHeaders(),
+        });
+
+        const devices = await response.json();
+        allDevices = devices;
+
+        updateTelemetryDeviceDropdown(devices);
+
+        const container = document.getElementById("devices");
+        container.innerHTML = "";
+
+        devices.forEach((device) => {
+          const card = document.createElement("div");
+          card.className = "card";
+
+          card.innerHTML = `
+                <h3>${device.device_name}</h3>
+                <p>Type: ${device.device_type}</p>
+                <p>Room: ${device.room || "Unassigned"}</p>
+                <p>State: ${device.state}</p>
+                <p>Status: <span class="${device.is_online ? "online" : "offline"}">
+                    ${device.is_online ? "Online" : "Offline"}
+                </span></p>
+                <button onclick="sendCommand(${device.device_id}, 'TURN_ON')">Turn ON</button>
+                <button onclick="sendCommand(${device.device_id}, 'TURN_OFF')">Turn OFF</button>
+            `;
+
+          container.appendChild(card);
+        });
+      }
+
+      function updateTelemetryDeviceDropdown(devices) {
+        const select = document.getElementById("telemetryDeviceSelect");
+        select.innerHTML = "";
+
+        devices.forEach((device) => {
+          const option = document.createElement("option");
+          option.value = device.device_id;
+          option.textContent = `${device.device_name} (${device.device_type})`;
+          select.appendChild(option);
+        });
+      }
+
+      async function loadDashboard() {
+        if (!token) {
+          alert("Login first");
+          return;
+        }
+
+        const response = await fetch(`${API_BASE}/dashboard`, {
+          headers: authHeaders(),
+        });
+
+        const data = await response.json();
+        const container = document.getElementById("dashboard");
+
+        container.innerHTML = "";
+
+        Object.keys(data).forEach((room) => {
+          const roomDiv = document.createElement("div");
+          roomDiv.className = "card";
+
+          let html = `<h3>${room}</h3>`;
+
+          data[room].forEach((device) => {
+            html += `
+                    <p>
+                        ${device.device_name}
+                        (${device.device_type}) -
+                        ${device.state} -
+                        ${device.is_online ? "Online" : "Offline"}
+                    </p>
+                `;
+          });
+
+          roomDiv.innerHTML = html;
+          container.appendChild(roomDiv);
+        });
+      }
+
+      async function sendCommand(deviceId, commandType) {
+        if (!token) {
+          alert("Login first");
+          return;
+        }
+
+        const url = `${API_BASE}/devices/${deviceId}/command?command_type=${commandType}`;
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers: authHeaders(),
+        });
+
+        const data = await response.json();
+
+        addEvent({
+          event: "manual_command_sent",
+          response: data,
+        });
+      }
+
+      function initializeCharts() {
+        const tempCtx = document
+          .getElementById("temperatureChart")
+          .getContext("2d");
+        const humCtx = document
+          .getElementById("humidityChart")
+          .getContext("2d");
+
+        temperatureChart = new Chart(tempCtx, {
+          type: "line",
+          data: {
+            labels: [],
+            datasets: [
+              {
+                label: "Temperature",
+                data: [],
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            scales: {
+              y: {
+                beginAtZero: false,
+              },
+            },
+          },
+        });
+
+        humidityChart = new Chart(humCtx, {
+          type: "line",
+          data: {
+            labels: [],
+            datasets: [
+              {
+                label: "Humidity",
+                data: [],
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            scales: {
+              y: {
+                beginAtZero: false,
+              },
+            },
+          },
+        });
+      }
+
+      async function loadTelemetryHistory() {
+        if (!token) {
+          alert("Login first");
+          return;
+        }
+
+        const deviceId = document.getElementById("telemetryDeviceSelect").value;
+
+        if (!deviceId) {
+          alert("No device selected");
+          return;
+        }
+
+        const response = await fetch(
+          `${API_BASE}/devices/${deviceId}/telemetry?limit=30`,
+          {
+            headers: authHeaders(),
+          },
+        );
+
+        const telemetry = await response.json();
+
+        temperatureChart.data.labels = [];
+        temperatureChart.data.datasets[0].data = [];
+
+        humidityChart.data.labels = [];
+        humidityChart.data.datasets[0].data = [];
+
+        telemetry.reverse().forEach((item) => {
+          const time = new Date(item.created_at).toLocaleTimeString();
+
+          temperatureChart.data.labels.push(time);
+          temperatureChart.data.datasets[0].data.push(Number(item.temperature));
+
+          humidityChart.data.labels.push(time);
+          humidityChart.data.datasets[0].data.push(Number(item.humidity));
+
+          if (item.motion_detected) {
+            addMotionEvent({
+              device_id: item.device_id,
+              motion_detected: item.motion_detected,
+              time: item.created_at,
+            });
+          }
+        });
+
+        temperatureChart.update();
+        humidityChart.update();
+      }
+
+      function addLiveTelemetryPoint(data) {
+        const selectedDeviceId = Number(
+          document.getElementById("telemetryDeviceSelect").value,
+        );
+
+        if (selectedDeviceId && data.device_id !== selectedDeviceId) {
+          return;
+        }
+
+        const time = new Date().toLocaleTimeString();
+
+        temperatureChart.data.labels.push(time);
+        temperatureChart.data.datasets[0].data.push(Number(data.temperature));
+
+        humidityChart.data.labels.push(time);
+        humidityChart.data.datasets[0].data.push(Number(data.humidity));
+
+        if (temperatureChart.data.labels.length > 30) {
+          temperatureChart.data.labels.shift();
+          temperatureChart.data.datasets[0].data.shift();
+        }
+
+        if (humidityChart.data.labels.length > 30) {
+          humidityChart.data.labels.shift();
+          humidityChart.data.datasets[0].data.shift();
+        }
+
+        temperatureChart.update();
+        humidityChart.update();
+
+        if (data.motion_detected === true) {
+          addMotionEvent({
+            device_id: data.device_id,
+            motion_detected: true,
+            time: new Date(),
+          });
+        }
+      }
+
+      function addMotionEvent(data) {
+        const container = document.getElementById("motionEvents");
+
+        const item = document.createElement("div");
+        item.className = "event-item";
+
+        item.innerText = `[${new Date().toLocaleTimeString()}] Motion detected by device ${data.device_id}`;
+
+        container.prepend(item);
+      }
+
+      function connectWebSocket() {
+        if (socket) {
+          socket.close();
+        }
+
+        socket = new WebSocket(WS_URL);
+
+        socket.onopen = () => {
+          addEvent({
+            event: "websocket_connected",
+            message: "Live connection established",
+          });
+        };
+
+        socket.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          addEvent(data);
+
+          if (data.event === "telemetry") {
+            addLiveTelemetryPoint(data);
+          }
+
+          if (data.event === "rule_triggered") {
+            addMotionEvent({
+              device_id: data.action_device_id,
+              motion_detected: true,
+              time: new Date(),
+            });
+          }
+
+          loadDevices();
+          loadDashboard();
+        };
+
+        socket.onerror = () => {
+          addEvent({
+            event: "websocket_error",
+            message: "WebSocket error occurred",
+          });
+        };
+
+        socket.onclose = () => {
+          addEvent({
+            event: "websocket_closed",
+            message: "Connection closed",
+          });
+        };
+      }
+
+      function addEvent(eventData) {
+        const container = document.getElementById("events");
+
+        const item = document.createElement("div");
+        item.className = "event-item";
+
+        item.innerText = `[${new Date().toLocaleTimeString()}] ${JSON.stringify(eventData)}`;
+
+        container.prepend(item);
+      }
+    </script>
+  </body>
+</html>
