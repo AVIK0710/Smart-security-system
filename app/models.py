@@ -20,8 +20,13 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     is_admin = Column(Boolean, default=False)
+    password_reset_otp_hash = Column(String, nullable=True)
+    password_reset_otp_expires_at = Column(DateTime, nullable=True)
+    password_reset_token_hash = Column(String, nullable=True)
+    password_reset_expires_at = Column(DateTime, nullable=True)
 
     organization_id = Column(Integer, ForeignKey("organizations.id"))
     organization = relationship("Organization", back_populates="users")
@@ -86,6 +91,17 @@ class DeviceCommand(Base):
     executed_at = Column(DateTime, nullable=True)
 
     device = relationship("Device")
+
+
+class AppEvent(Base):
+    __tablename__ = "app_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    event_type = Column(String, nullable=False)
+    message = Column(String, nullable=True)
+    payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Scene(Base):

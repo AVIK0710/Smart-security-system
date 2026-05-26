@@ -1,28 +1,48 @@
+import hmac
 from datetime import datetime, timedelta
 
+import bcrypt
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from . import models
+from .config import ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, SECRET_KEY
 
-SECRET_KEY = "change_this_to_a_long_random_secret"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    safe = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(safe, bcrypt.gensalt()).decode("utf-8")
+
+
+def hash_secret(secret: str) -> str:
+    return hash_password(secret)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except ValueError:
+        return False
+
+
+def verify_secret(plain_secret: str, stored_secret: str) -> bool:
+    if not stored_secret:
+        return False
+    if stored_secret.startswith("$2"):
+        return verify_password(plain_secret, stored_secret)
+    return secrets_compare(plain_secret, stored_secret)
+
+
+def secrets_compare(left: str, right: str) -> bool:
+    return hmac.compare_digest(left, right)
 
 
 def create_access_token(data: dict) -> str:
@@ -42,11 +62,11 @@ def get_db():
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     credentials_exception = HTTPException(
         status_code=401,
-        detail="Could not validate credentials"
+        detail="Could not validate credentials",
     )
 
     token = credentials.credentials

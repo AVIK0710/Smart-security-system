@@ -9,7 +9,7 @@ import {
 } from "react";
 import Chart from "chart.js/auto";
 import { api, authHeaders } from "../api/client.js";
-import { WS_URL } from "../api/config.js";
+import { BACKEND_PORT, WS_URL } from "../api/config.js";
 import {
   commandTypeFromSpeech,
   findBestDevice,
@@ -21,6 +21,22 @@ const AppContext = createContext(null);
 
 const KNOWN_PEOPLE_KEY = "smart_home_known_people";
 const TOKEN_KEY = "smart_home_token";
+const EVENTS_KEY = "smart_home_live_feed";
+const EVENT_RETENTION_MS = 72 * 60 * 60 * 1000;
+
+function pruneEvents(items) {
+  const cutoff = Date.now() - EVENT_RETENTION_MS;
+  return items.filter((item) => new Date(item.time).getTime() >= cutoff);
+}
+
+function loadStoredEvents() {
+  try {
+    return pruneEvents(JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]"));
+  } catch {
+    localStorage.removeItem(EVENTS_KEY);
+    return [];
+  }
+}
 
 export function AppProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
@@ -29,7 +45,8 @@ export function AppProvider({ children }) {
   const [dashboard, setDashboard] = useState({});
   const [scenes, setScenes] = useState([]);
   const [rules, setRules] = useState([]);
-  const [events, setEvents] = useState([]);
+  const [commandsByDevice, setCommandsByDevice] = useState({});
+  const [events, setEvents] = useState(loadStoredEvents);
   const [alerts, setAlerts] = useState(0);
   const [knownPeople, setKnownPeople] = useState(() =>
     JSON.parse(localStorage.getItem(KNOWN_PEOPLE_KEY) || "[]"),
@@ -65,7 +82,11 @@ export function AppProvider({ children }) {
 
   const addEvent = useCallback((eventData) => {
     setEvents((prev) => {
-      const next = [{ time: new Date(), data: eventData }, ...prev].slice(0, 100);
+      const next = pruneEvents([
+        { time: new Date().toISOString(), data: eventData },
+        ...prev,
+      ]).slice(0, 100);
+      localStorage.setItem(EVENTS_KEY, JSON.stringify(next));
       return next;
     });
     if (
@@ -106,7 +127,7 @@ export function AppProvider({ children }) {
       return true;
     } catch {
       setBackendStatus("offline");
-      toast("Backend is not reachable on port 8000");
+      toast(`Backend is not reachable. Start: python -m uvicorn app.main:app --reload --port ${BACKEND_PORT}`);
       return false;
     }
   }, [toast]);
@@ -138,16 +159,57 @@ export function AppProvider({ children }) {
     setRules(data);
   }, [token]);
 
+  const normalizeBackendEvents = useCallback((items) =>
+    items.map((item) => ({
+      time: item.created_at,
+      data: {
+        event: item.event,
+        message: item.message,
+        ...(item.payload || {}),
+      },
+    })),
+  []);
+
+  const loadEvents = useCallback(async (authToken = token) => {
+    if (!authToken) return;
+    const data = await api("/events?limit=100", { headers: authHeaders(authToken) });
+    const normalized = normalizeBackendEvents(data);
+    setEvents(normalized);
+    localStorage.setItem(EVENTS_KEY, JSON.stringify(normalized));
+  }, [token, normalizeBackendEvents]);
+
+  const loadCommandStatus = useCallback(async (deviceData, authToken = token) => {
+    if (!authToken || !deviceData.length) {
+      setCommandsByDevice({});
+      return;
+    }
+
+    const entries = await Promise.all(
+      deviceData.map(async (device) => {
+        try {
+          const commands = await api(`/devices/${device.device_id}/commands?limit=5`, {
+            headers: authHeaders(authToken),
+          });
+          return [device.device_id, commands];
+        } catch {
+          return [device.device_id, []];
+        }
+      }),
+    );
+
+    setCommandsByDevice(Object.fromEntries(entries));
+  }, [token]);
+
   const renderMotion = useCallback((items) => {
     setMotionEvents(items);
   }, []);
 
-  const loadTelemetryHistory = useCallback(async () => {
-    if (!token || !telemetryDeviceId || !tempChartRef.current) return;
+  const loadTelemetryHistory = useCallback(async (authToken = token, deviceId = telemetryDeviceId) => {
+    if (!authToken || !deviceId || !tempChartRef.current) return;
 
     try {
-      const telemetry = await api(`/devices/${telemetryDeviceId}/telemetry?limit=30`, {
-        headers: authHeaders(token),
+      const telemetry = await api(`/devices/${deviceId}/telemetry?limit=30`, {
+        headers: authHeaders(authToken),
       });
 
       const sorted = [...telemetry].reverse();
@@ -164,29 +226,51 @@ export function AppProvider({ children }) {
     }
   }, [token, telemetryDeviceId, toast, renderMotion]);
 
-  const refreshAll = useCallback(async () => {
-    await checkBackend();
-    if (!token) {
-      switchView("access");
-      return;
-    }
-    try {
-      await Promise.all([loadDevices(), loadDashboard(), loadScenes(), loadRules()]);
-      await loadTelemetryHistory();
-    } catch (error) {
-      toast(error.message);
-    }
-  }, [
-    checkBackend,
-    token,
-    switchView,
-    loadDevices,
-    loadDashboard,
-    loadScenes,
-    loadRules,
-    loadTelemetryHistory,
-    toast,
-  ]);
+  const refreshAll = useCallback(
+    async (authToken = token) => {
+      await checkBackend();
+      if (!authToken) {
+        switchView("access");
+        return;
+      }
+      try {
+        const headers = authHeaders(authToken);
+        const [deviceData, dashboardData, sceneData, ruleData, eventData] = await Promise.all([
+          api("/devices", { headers }),
+          api("/dashboard", { headers }),
+          api("/scenes", { headers }),
+          api("/rules", { headers }),
+          api("/events?limit=100", { headers }),
+        ]);
+        setDevices(deviceData);
+        setDashboard(dashboardData);
+        setScenes(sceneData);
+        setRules(ruleData);
+        const normalizedEvents = normalizeBackendEvents(eventData);
+        setEvents(normalizedEvents);
+        localStorage.setItem(EVENTS_KEY, JSON.stringify(normalizedEvents));
+        await loadCommandStatus(deviceData, authToken);
+        const selectedDeviceId =
+          telemetryDeviceId || (deviceData[0] ? String(deviceData[0].device_id) : "");
+        if (selectedDeviceId && !telemetryDeviceId) {
+          setTelemetryDeviceId(selectedDeviceId);
+        }
+        if (selectedDeviceId) {
+          await loadTelemetryHistory(authToken, selectedDeviceId);
+        }
+      } catch (error) {
+        if (String(error.message).toLowerCase().includes("credentials")) {
+          localStorage.removeItem(TOKEN_KEY);
+          setToken(null);
+          switchView("access");
+          toast("Session expired. Please log in again.");
+          return;
+        }
+        toast(error.message);
+      }
+    },
+    [checkBackend, token, switchView, telemetryDeviceId, loadTelemetryHistory, toast, normalizeBackendEvents, loadCommandStatus],
+  );
 
   const sendCommand = useCallback(
     async (deviceId, commandType, source = "manual") => {
@@ -195,6 +279,38 @@ export function AppProvider({ children }) {
           `/devices/${deviceId}/command?command_type=${encodeURIComponent(commandType)}`,
           { method: "POST", headers: authHeaders(token) },
         );
+        setDevices((prev) =>
+          prev.map((device) =>
+            device.device_id === deviceId
+              ? { ...device, state: data.state || (commandType === "TURN_ON" ? "ON" : "OFF") }
+              : device,
+          ),
+        );
+        setDashboard((prev) =>
+          Object.fromEntries(
+            Object.entries(prev).map(([room, roomDevices]) => [
+              room,
+              roomDevices.map((device) =>
+                device.device_id === deviceId
+                  ? { ...device, state: data.state || (commandType === "TURN_ON" ? "ON" : "OFF") }
+                  : device,
+              ),
+            ]),
+          ),
+        );
+        setCommandsByDevice((prev) => ({
+          ...prev,
+          [deviceId]: [
+            {
+              command_id: data.command_id,
+              command_type: commandType,
+              payload: null,
+              status: data.status || "pending",
+              created_at: new Date().toISOString(),
+            },
+            ...(prev[deviceId] || []),
+          ].slice(0, 5),
+        }));
         addEvent({
           event: `${source}_command_sent`,
           device_id: deviceId,
@@ -354,6 +470,8 @@ export function AppProvider({ children }) {
     recognition.onerror = (event) => {
       toast(`Voice error: ${event.error}`);
       setVoiceStatus("ready");
+      setListening(false);
+      setVoiceResult("Voice was interrupted. Try again or type the command.");
     };
 
     recognition.onend = () => {
@@ -369,7 +487,13 @@ export function AppProvider({ children }) {
     if (!recognitionRef.current) initVoiceRecognition();
     if (!recognitionRef.current || listening) return;
     switchView("overview");
-    recognitionRef.current.start();
+    try {
+      recognitionRef.current.start();
+    } catch {
+      setListening(false);
+      setVoiceStatus("ready");
+      setVoiceResult("Voice is already active. Stop it and try again.");
+    }
   }, [initVoiceRecognition, listening, switchView]);
 
   const stopVoice = useCallback(() => {
@@ -381,6 +505,7 @@ export function AppProvider({ children }) {
     setToken(null);
     setDevices([]);
     setDashboard({});
+    setCommandsByDevice({});
     if (socketRef.current) socketRef.current.close();
     setSocketStatus("offline");
     switchView("access");
@@ -388,29 +513,30 @@ export function AppProvider({ children }) {
 
   const login = useCallback(
     async (username, password) => {
-      const formData = new URLSearchParams();
-      formData.append("username", username);
-      formData.append("password", password);
       const data = await api("/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData,
-      });
-      setToken(data.access_token);
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      connectWebSocket();
-      switchView("overview");
-      toast("Signed in");
-    },
-    [connectWebSocket, switchView, toast],
-  );
-
-  const register = useCallback(
-    async (username, password) => {
-      await api("/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
+      });
+      const accessToken = data.access_token;
+      localStorage.setItem(TOKEN_KEY, accessToken);
+      setToken(accessToken);
+      setBackendStatus("online");
+      connectWebSocket();
+      switchView("overview");
+      await refreshAll(accessToken);
+      toast("Signed in");
+      return accessToken;
+    },
+    [connectWebSocket, switchView, toast, refreshAll],
+  );
+
+  const register = useCallback(
+    async (username, email, password) => {
+      await api("/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password }),
       });
       setAuthTab("login");
       setCurrentView("access");
@@ -419,6 +545,35 @@ export function AppProvider({ children }) {
     },
     [toast],
   );
+
+  const requestPasswordReset = useCallback(async (email) => {
+    return api("/password/forgot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  }, []);
+
+  const verifyPasswordOtp = useCallback(async (email, otp) => {
+    return api("/password/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, otp }),
+    });
+  }, []);
+
+  const resetPassword = useCallback(async (email, resetToken, newPassword, confirmPassword) => {
+    return api("/password/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        reset_token: resetToken,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    });
+  }, []);
 
   const registerDevice = useCallback(
     async (payload) => {
@@ -437,6 +592,31 @@ export function AppProvider({ children }) {
     [token, refreshAll, toast],
   );
 
+  const updateDevice = useCallback(
+    async (deviceId, payload) => {
+      await api(`/devices/${deviceId}`, {
+        method: "PATCH",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      await refreshAll();
+      toast("Device updated");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const deleteDevice = useCallback(
+    async (deviceId) => {
+      await api(`/devices/${deviceId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await refreshAll();
+      toast("Device deleted");
+    },
+    [token, refreshAll, toast],
+  );
+
   const createScene = useCallback(
     async (payload) => {
       await api("/scenes", {
@@ -450,6 +630,31 @@ export function AppProvider({ children }) {
     [token, refreshAll, toast],
   );
 
+  const updateScene = useCallback(
+    async (sceneId, payload) => {
+      await api(`/scenes/${sceneId}`, {
+        method: "PATCH",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      await refreshAll();
+      toast("Scene updated");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const deleteScene = useCallback(
+    async (sceneId) => {
+      await api(`/scenes/${sceneId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await refreshAll();
+      toast("Scene deleted");
+    },
+    [token, refreshAll, toast],
+  );
+
   const createRule = useCallback(
     async (payload) => {
       await api("/rules", {
@@ -459,6 +664,31 @@ export function AppProvider({ children }) {
       });
       await refreshAll();
       toast("Rule created");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const updateRule = useCallback(
+    async (ruleId, payload) => {
+      await api(`/rules/${ruleId}`, {
+        method: "PATCH",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      await refreshAll();
+      toast("Rule updated");
+    },
+    [token, refreshAll, toast],
+  );
+
+  const deleteRule = useCallback(
+    async (ruleId) => {
+      await api(`/rules/${ruleId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await refreshAll();
+      toast("Rule deleted");
     },
     [token, refreshAll, toast],
   );
@@ -480,55 +710,31 @@ export function AppProvider({ children }) {
     });
   }, []);
 
-  const clearEvents = useCallback(() => setEvents([]), []);
+  const runVoiceCommand = useCallback(
+    async (commandText) => {
+      const text = commandText.trim();
+      if (!text) return;
+      switchView("overview");
+      await handleVoiceCommand(text);
+    },
+    [handleVoiceCommand, switchView],
+  );
 
-  const metrics = useMemo(() => {
-    const rooms = new Set(devices.map((d) => d.room || "Unassigned"));
-    const online = devices.filter((d) => d.is_online).length;
-    const offline = Math.max(devices.length - online, 0);
-    const homeStatusText =
-      offline === 0 ? "All Devices Online" : `${offline} Device${offline === 1 ? "" : "s"} Offline`;
-    const safeStatusTitle = offline === 0 ? "All Systems Normal" : "Attention Needed";
-    const safeStatusText =
-      offline === 0
-        ? "Your home is safe and smart."
-        : "Some devices are offline or not responding.";
-    const energyLoad = devices.length
-      ? `${online} active across ${rooms.size} room${rooms.size === 1 ? "" : "s"}`
-      : "No active devices yet";
-    return {
-      total: devices.length,
-      online,
-      offline,
-      alerts,
-      homeStatusText,
-      safeStatusTitle,
-      safeStatusText,
-      energyLoad,
-    };
-  }, [devices, alerts]);
-
-  const roomEntries = useMemo(() => Object.entries(dashboard), [dashboard]);
-  const selectedRoom = roomEntries[0]?.[0] ?? "Rooms";
-  const selectedRoomCount = roomEntries[0]?.[1]?.length ?? 0;
-
-  useEffect(() => {
-    initVoiceRecognition();
-    checkBackend();
-  }, [initVoiceRecognition, checkBackend]);
-
-  useEffect(() => {
+  const clearEvents = useCallback(async () => {
     if (token) {
-      connectWebSocket();
-      refreshAll();
-    } else {
-      switchView("access");
+      try {
+        await api("/events", { method: "DELETE", headers: authHeaders(token) });
+      } catch (error) {
+        toast(error.message);
+      }
     }
-  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+    localStorage.removeItem(EVENTS_KEY);
+    setEvents([]);
+  }, [token, toast]);
 
-  useEffect(() => {
-    if (!tempCanvasRef.current || !humidityCanvasRef.current) return;
-    if (tempChartRef.current) return;
+  const initTelemetryCharts = useCallback(() => {
+    if (!tempCanvasRef.current || !humidityCanvasRef.current) return false;
+    if (tempChartRef.current && humidityChartRef.current) return true;
 
     const baseOptions = {
       responsive: true,
@@ -576,13 +782,84 @@ export function AppProvider({ children }) {
       options: baseOptions,
     });
 
+    return true;
+  }, []);
+
+  const metrics = useMemo(() => {
+    const rooms = new Set(devices.map((d) => d.room || "Unassigned"));
+    const online = devices.filter((d) => d.is_online).length;
+    const offline = Math.max(devices.length - online, 0);
+    const homeStatusText = !devices.length
+      ? "No Devices Registered"
+      : offline === 0 ? "All Devices Online" : `${offline} Device${offline === 1 ? "" : "s"} Offline`;
+    const safeStatusTitle = !devices.length
+      ? "Setup Needed"
+      : offline === 0 ? "All Systems Normal" : "Attention Needed";
+    const safeStatusText =
+      !devices.length
+        ? "Register or seed devices to start monitoring."
+        : offline === 0
+        ? "Your home is safe and smart."
+        : "Some devices are offline or not responding.";
+    const energyLoad = devices.length
+      ? `${online} active across ${rooms.size} room${rooms.size === 1 ? "" : "s"}`
+      : "No active devices yet";
+    return {
+      total: devices.length,
+      online,
+      offline,
+      alerts,
+      homeStatusText,
+      safeStatusTitle,
+      safeStatusText,
+      energyLoad,
+    };
+  }, [devices, alerts]);
+
+  const roomEntries = useMemo(() => Object.entries(dashboard), [dashboard]);
+  const selectedRoom = roomEntries[0]?.[0] ?? "Rooms";
+  const selectedRoomCount = roomEntries[0]?.[1]?.length ?? 0;
+
+  useEffect(() => {
+    initVoiceRecognition();
+    checkBackend();
+  }, [initVoiceRecognition, checkBackend]);
+
+  useEffect(() => {
+    const prune = () => {
+      setEvents((prev) => {
+        const next = pruneEvents(prev);
+        if (next.length !== prev.length) {
+          localStorage.setItem(EVENTS_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    };
+
+    prune();
+    const intervalId = window.setInterval(prune, 60 * 60 * 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (token) {
+      connectWebSocket();
+      refreshAll();
+    } else {
+      switchView("access");
+    }
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    initTelemetryCharts();
+
     return () => {
       tempChartRef.current?.destroy();
       humidityChartRef.current?.destroy();
       tempChartRef.current = null;
       humidityChartRef.current = null;
     };
-  }, []);
+  }, [initTelemetryCharts]);
 
   useEffect(() => {
     if (token && telemetryDeviceId && tempChartRef.current) {
@@ -601,6 +878,7 @@ export function AppProvider({ children }) {
     scenes,
     rules,
     events,
+    commandsByDevice,
     knownPeople,
     provisioningLog,
     toasts,
@@ -621,19 +899,32 @@ export function AppProvider({ children }) {
     selectedRoomCount,
     toast,
     refreshAll,
+    loadEvents,
+    loadTelemetryHistory,
     sendCommand,
     runScene,
+    runVoiceCommand,
     startVoice,
     stopVoice,
     logout,
     login,
     register,
+    requestPasswordReset,
+    verifyPasswordOtp,
+    resetPassword,
     registerDevice,
+    updateDevice,
+    deleteDevice,
     createScene,
+    updateScene,
+    deleteScene,
     createRule,
+    updateRule,
+    deleteRule,
     addKnownPerson,
     removeKnownPerson,
     clearEvents,
+    initTelemetryCharts,
     tempCanvasRef,
     humidityCanvasRef,
   };

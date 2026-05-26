@@ -2,6 +2,7 @@ import { useApp } from "../context/AppContext.jsx";
 import DeviceCard from "../components/DeviceCard.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
 import RoomCard from "../components/RoomCard.jsx";
+import { useState } from "react";
 
 export default function OverviewView() {
   const {
@@ -9,14 +10,23 @@ export default function OverviewView() {
     roomEntries,
     selectedRoom,
     selectedRoomCount,
+    commandsByDevice,
     metrics,
     voiceStatus,
     voiceTranscript,
     voiceResult,
     startVoice,
     stopVoice,
+    runVoiceCommand,
     sendCommand,
   } = useApp();
+  const [voiceText, setVoiceText] = useState("");
+
+  const handleVoiceTextSubmit = async (event) => {
+    event.preventDefault();
+    await runVoiceCommand(voiceText);
+    setVoiceText("");
+  };
 
   return (
     <section className="view active">
@@ -56,7 +66,12 @@ export default function OverviewView() {
             <div className="empty">Register a device to see live controls</div>
           ) : (
             devices.map((device) => (
-              <DeviceCard key={device.device_id} device={device} onCommand={sendCommand} />
+              <DeviceCard
+                key={device.device_id}
+                device={device}
+                commands={commandsByDevice[device.device_id] || []}
+                onCommand={sendCommand}
+              />
             ))
           )}
         </div>
@@ -108,6 +123,18 @@ export default function OverviewView() {
             </button>
           </div>
           <div className="voice-result">{voiceResult}</div>
+          <form className="voice-command-form" onSubmit={handleVoiceTextSubmit}>
+            <input
+              aria-label="Voice command text"
+              value={voiceText}
+              onChange={(event) => setVoiceText(event.target.value)}
+              placeholder="turn on living room light"
+            />
+            <button className="btn" type="submit">
+              <LucideIcon name="Send" />
+              <span>Run</span>
+            </button>
+          </form>
         </div>
       </section>
     </section>

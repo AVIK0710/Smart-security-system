@@ -4,7 +4,7 @@ import EventList from "../components/EventList.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
 
 export default function SettingsView() {
-  const { rules, devices, events, createRule, clearEvents } = useApp();
+  const { rules, devices, events, createRule, updateRule, deleteRule, clearEvents } = useApp();
   const [ruleName, setRuleName] = useState("");
   const [ruleSensor, setRuleSensor] = useState("");
   const [conditionType, setConditionType] = useState("motion");
@@ -30,6 +30,21 @@ export default function SettingsView() {
     setRuleName("");
     setConditionValue("");
     setConditionOperator("");
+  };
+
+  const handleRename = async (rule) => {
+    const name = window.prompt("Rule name", rule.name);
+    if (!name || name === rule.name) return;
+    await updateRule(rule.rule_id, { name });
+  };
+
+  const handleToggle = async (rule) => {
+    await updateRule(rule.rule_id, { is_active: !rule.is_active });
+  };
+
+  const handleDelete = async (rule) => {
+    if (!window.confirm(`Delete ${rule.name}?`)) return;
+    await deleteRule(rule.rule_id);
   };
 
   return (
@@ -70,6 +85,20 @@ export default function SettingsView() {
                         #{rule.action_device_id} {rule.action_command}
                       </strong>
                     </div>
+                  </div>
+                  <div className="card-actions">
+                    <button className="btn secondary" type="button" onClick={() => handleRename(rule)}>
+                      <LucideIcon name="Pencil" />
+                      <span>Rename</span>
+                    </button>
+                    <button className="btn secondary" type="button" onClick={() => handleToggle(rule)}>
+                      <LucideIcon name={rule.is_active ? "Pause" : "Play"} />
+                      <span>{rule.is_active ? "Pause" : "Enable"}</span>
+                    </button>
+                    <button className="btn danger" type="button" onClick={() => handleDelete(rule)}>
+                      <LucideIcon name="Trash2" />
+                      <span>Delete</span>
+                    </button>
                   </div>
                 </article>
               ))
@@ -179,7 +208,7 @@ export default function SettingsView() {
           <div className="section-head">
             <div>
               <h3>Live Feed</h3>
-              <span>WebSocket messages, voice commands, and actions</span>
+              <span>WebSocket messages, voice commands, and actions kept for 72 hours</span>
             </div>
             <button className="btn secondary" type="button" title="Clear events" onClick={clearEvents}>
               <LucideIcon name="Trash2" />

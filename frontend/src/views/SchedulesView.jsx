@@ -3,7 +3,7 @@ import { useApp } from "../context/AppContext.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
 
 export default function SchedulesView() {
-  const { scenes, devices, runScene, createScene } = useApp();
+  const { scenes, devices, runScene, createScene, updateScene, deleteScene } = useApp();
   const [sceneName, setSceneName] = useState("");
   const [sceneDevice, setSceneDevice] = useState("");
   const [sceneCommand, setSceneCommand] = useState("TURN_ON");
@@ -25,6 +25,17 @@ export default function SchedulesView() {
     });
     setSceneName("");
     setScenePayload("");
+  };
+
+  const handleRename = async (scene) => {
+    const name = window.prompt("Scene name", scene.name);
+    if (!name || name === scene.name) return;
+    await updateScene(scene.scene_id, { name });
+  };
+
+  const handleDelete = async (scene) => {
+    if (!window.confirm(`Delete ${scene.name}?`)) return;
+    await deleteScene(scene.scene_id);
   };
 
   return (
@@ -54,6 +65,16 @@ export default function SchedulesView() {
                     <LucideIcon name="Play" />
                     <span>Run</span>
                   </button>
+                  <div className="card-actions">
+                    <button className="btn secondary" type="button" onClick={() => handleRename(scene)}>
+                      <LucideIcon name="Pencil" />
+                      <span>Rename</span>
+                    </button>
+                    <button className="btn danger" type="button" onClick={() => handleDelete(scene)}>
+                      <LucideIcon name="Trash2" />
+                      <span>Delete</span>
+                    </button>
+                  </div>
                 </article>
               ))
             )}

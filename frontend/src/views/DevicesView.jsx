@@ -5,7 +5,15 @@ import LucideIcon from "../components/LucideIcon.jsx";
 import { DEVICE_TYPES } from "../utils/helpers.js";
 
 export default function DevicesView() {
-  const { devices, sendCommand, registerDevice, provisioningLog } = useApp();
+  const {
+    devices,
+    commandsByDevice,
+    sendCommand,
+    registerDevice,
+    updateDevice,
+    deleteDevice,
+    provisioningLog,
+  } = useApp();
   const [name, setName] = useState("");
   const [deviceType, setDeviceType] = useState("light");
   const [room, setRoom] = useState("");
@@ -20,6 +28,23 @@ export default function DevicesView() {
     setName("");
     setRoom("");
     setDeviceType("light");
+  };
+
+  const handleRename = async (device) => {
+    const name = window.prompt("Device name", device.device_name);
+    if (!name || name === device.device_name) return;
+    await updateDevice(device.device_id, { name });
+  };
+
+  const handleMove = async (device) => {
+    const room = window.prompt("Room", device.room || "");
+    if (room === null || room === device.room) return;
+    await updateDevice(device.device_id, { room: room || null });
+  };
+
+  const handleDelete = async (device) => {
+    if (!window.confirm(`Delete ${device.device_name}? Rules, telemetry, and scene actions for it will also be removed.`)) return;
+    await deleteDevice(device.device_id);
   };
 
   const provisionItems = provisioningLog.map((item) => ({
@@ -42,7 +67,27 @@ export default function DevicesView() {
               <div className="empty">Register a device to see live controls</div>
             ) : (
               devices.map((device) => (
-                <DeviceCard key={device.device_id} device={device} onCommand={sendCommand} />
+                <div key={device.device_id} className="managed-card">
+                  <DeviceCard
+                    device={device}
+                    commands={commandsByDevice[device.device_id] || []}
+                    onCommand={sendCommand}
+                  />
+                  <div className="card-actions">
+                    <button className="btn secondary" type="button" onClick={() => handleRename(device)}>
+                      <LucideIcon name="Pencil" />
+                      <span>Rename</span>
+                    </button>
+                    <button className="btn secondary" type="button" onClick={() => handleMove(device)}>
+                      <LucideIcon name="MapPin" />
+                      <span>Room</span>
+                    </button>
+                    <button className="btn danger" type="button" onClick={() => handleDelete(device)}>
+                      <LucideIcon name="Trash2" />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </div>
               ))
             )}
           </div>

@@ -11,3 +11,8 @@ class SceneActionCreate(BaseModel):
 class SceneCreate(BaseModel):
     name: str
     actions: List[SceneActionCreate]
+
+
+class SceneUpdate(BaseModel):
+    name: Optional[str] = None
+    actions: Optional[List[SceneActionCreate]] = None

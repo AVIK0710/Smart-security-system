@@ -1,8 +1,15 @@
+import { useEffect } from "react";
 import { useApp } from "../context/AppContext.jsx";
 
 export default function EnergyView() {
-  const { metrics, devices, telemetryDeviceId, setTelemetryDeviceId, tempCanvasRef, humidityCanvasRef } =
+  const { metrics, devices, telemetryDeviceId, setTelemetryDeviceId, tempCanvasRef, humidityCanvasRef, initTelemetryCharts, loadTelemetryHistory } =
     useApp();
+
+  useEffect(() => {
+    if (initTelemetryCharts() && telemetryDeviceId) {
+      loadTelemetryHistory();
+    }
+  }, [initTelemetryCharts, loadTelemetryHistory, telemetryDeviceId]);
 
   return (
     <section className="view active">

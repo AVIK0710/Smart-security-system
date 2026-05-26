@@ -1,32 +1,56 @@
 import { deviceImage } from "../utils/helpers.js";
+import LucideIcon from "./LucideIcon.jsx";
 
-export default function DeviceCard({ device, onCommand }) {
+export default function DeviceCard({ device, onCommand, commands = [] }) {
+  const isOn = String(device.state).toUpperCase() === "ON";
+  const isSensor = device.device_type === "sensor";
+  const stateLabel = isSensor ? String(device.state || "ACTIVE").toUpperCase() : isOn ? "ON" : "OFF";
+  const latestCommand = commands[0];
+
   return (
-    <article className="device-card">
+    <article className={`device-card ${isOn ? "is-on" : "is-off"}`}>
       <img alt={device.device_name} src={deviceImage(device)} />
       <div className="device-info">
-        <h4>{device.device_name}</h4>
-        <div className="device-actions">
-          <button
-            type="button"
-            className="toggle-btn on"
-            onClick={() => onCommand(device.device_id, "TURN_ON")}
-          >
-            ON
-          </button>
-          <button
-            type="button"
-            className="toggle-btn off"
-            onClick={() => onCommand(device.device_id, "TURN_OFF")}
-          >
-            OFF
-          </button>
+        <div className="device-title-row">
+          <h4>{device.device_name}</h4>
+          <span className={`device-state ${isOn || isSensor ? "on" : "off"}`}>
+            {stateLabel}
+          </span>
         </div>
+        {!isSensor ? (
+          <div className="power-control" aria-label={`${device.device_name} power control`}>
+            <button
+              type="button"
+              className={`power-btn ${isOn ? "active" : ""}`}
+              aria-pressed={isOn}
+              onClick={() => onCommand(device.device_id, "TURN_ON")}
+            >
+              <LucideIcon name="Power" size={18} />
+              <span>On</span>
+            </button>
+            <button
+              type="button"
+              className={`power-btn off ${!isOn ? "active" : ""}`}
+              aria-pressed={!isOn}
+              onClick={() => onCommand(device.device_id, "TURN_OFF")}
+            >
+              <LucideIcon name="PowerOff" size={18} />
+              <span>Off</span>
+            </button>
+          </div>
+        ) : (
+          <div className="sensor-pill">Sensor monitoring</div>
+        )}
         <div className="device-health">
-          <span className="green-dot" />
+          <span className={`green-dot ${device.is_online ? "" : "offline"}`} />
           {device.is_online ? "Good" : "Offline"}
           {device.room ? ` - ${device.room}` : ""}
         </div>
+        {latestCommand ? (
+          <div className={`command-status ${latestCommand.status}`}>
+            Last: {latestCommand.command_type} · {latestCommand.status}
+          </div>
+        ) : null}
       </div>
     </article>
   );

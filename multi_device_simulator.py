@@ -1,8 +1,9 @@
 import time
 import random
+import os
 import requests
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = os.getenv("SMART_HOME_API_BASE", "http://127.0.0.1:8001")
 
 
 DEVICES = {

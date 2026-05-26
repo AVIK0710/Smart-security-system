@@ -1,14 +1,30 @@
 import { API_BASE } from "./config.js";
 
 export async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE}${path}`, options);
+  } catch {
+    throw new Error(
+      "Cannot reach backend. Start it with: uvicorn app.main:app --reload --port 8000",
+    );
+  }
+
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("application/json")
     ? await response.json()
     : await response.text();
 
   if (!response.ok) {
-    const detail = data && data.detail ? data.detail : "Request failed";
+    let detail = `Request failed (${response.status})`;
+    if (typeof data === "object" && data?.detail) {
+      detail = Array.isArray(data.detail)
+        ? data.detail.map((item) => item.msg || JSON.stringify(item)).join(", ")
+        : data.detail;
+    } else if (typeof data === "string" && data) {
+      detail = data;
+    }
     throw new Error(detail);
   }
 

@@ -1,8 +1,9 @@
 import time
 import random
+import os
 import requests
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = os.getenv("SMART_HOME_API_BASE", "http://127.0.0.1:8001")
 
 DEVICE_UID = "07825630e0817642"
 DEVICE_TOKEN = "8421586460d114efb10bb22ae664731836a43e0b2eca47ac16d371f656f9df0f"

@@ -21,6 +21,7 @@ export default function EventList({ items, variant = "event-log", emptyText = "N
         <strong>
           {time.toLocaleTimeString()} - {eventName}
         </strong>
+        {item.data?.message ? <div className="event-message">{item.data.message}</div> : null}
         <code>{JSON.stringify(item.data, null, 2)}</code>
       </div>
     );
