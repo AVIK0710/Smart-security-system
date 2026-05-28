@@ -1,4 +1,4 @@
-import { deviceImage } from "../utils/helpers.js";
+import { deviceIcon } from "../utils/helpers.js";
 import LucideIcon from "./LucideIcon.jsx";
 
 export default function DeviceCard({ device, onCommand, commands = [] }) {
@@ -6,10 +6,13 @@ export default function DeviceCard({ device, onCommand, commands = [] }) {
   const isSensor = device.device_type === "sensor";
   const stateLabel = isSensor ? String(device.state || "ACTIVE").toUpperCase() : isOn ? "ON" : "OFF";
   const latestCommand = commands[0];
+  const presenceLabel = device.presence_label || (device.is_online ? "Live now" : "Offline");
 
   return (
-    <article className={`device-card ${isOn ? "is-on" : "is-off"}`}>
-      <img alt={device.device_name} src={deviceImage(device)} />
+    <article className={`device-card ${isOn ? "is-on" : "is-off"} ${device.is_online ? "online" : "offline"}`}>
+      <div className="device-icon" aria-hidden="true">
+        <LucideIcon name={deviceIcon(device)} size={36} />
+      </div>
       <div className="device-info">
         <div className="device-title-row">
           <h4>{device.device_name}</h4>
@@ -43,12 +46,13 @@ export default function DeviceCard({ device, onCommand, commands = [] }) {
         )}
         <div className="device-health">
           <span className={`green-dot ${device.is_online ? "" : "offline"}`} />
-          {device.is_online ? "Good" : "Offline"}
-          {device.room ? ` - ${device.room}` : ""}
+          <strong>{device.is_online ? "Online" : "Offline"}</strong>
+          <span>{presenceLabel}</span>
+          {device.room ? <span>{device.room}</span> : null}
         </div>
         {latestCommand ? (
           <div className={`command-status ${latestCommand.status}`}>
-            Last: {latestCommand.command_type} · {latestCommand.status}
+            Last: {latestCommand.command_type} - {latestCommand.status}
           </div>
         ) : null}
       </div>

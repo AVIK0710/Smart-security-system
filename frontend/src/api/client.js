@@ -7,7 +7,7 @@ export async function api(path, options = {}) {
     response = await fetch(`${API_BASE}${path}`, options);
   } catch {
     throw new Error(
-      "Cannot reach backend. Start it with: uvicorn app.main:app --reload --port 8000",
+      "Cannot reach backend. Start it with: python -m uvicorn app.main:app --reload --port 8001",
     );
   }
 

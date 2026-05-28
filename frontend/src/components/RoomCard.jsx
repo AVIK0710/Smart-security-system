@@ -1,9 +1,12 @@
-import { roomImage } from "../utils/helpers.js";
+import { roomIcon } from "../utils/helpers.js";
+import LucideIcon from "./LucideIcon.jsx";
 
 export default function RoomCard({ room, count, active }) {
   return (
     <article className={`room-card${active ? " active" : ""}`}>
-      <img alt={room} src={roomImage(room)} />
+      <div className="room-icon" aria-hidden="true">
+        <LucideIcon name={roomIcon(room)} size={42} />
+      </div>
       <h4>{room}</h4>
       <div>
         <span className="green-dot" />

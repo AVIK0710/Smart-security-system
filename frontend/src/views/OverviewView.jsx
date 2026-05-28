@@ -15,6 +15,7 @@ export default function OverviewView() {
     voiceStatus,
     voiceTranscript,
     voiceResult,
+    listening,
     startVoice,
     stopVoice,
     runVoiceCommand,
@@ -115,7 +116,7 @@ export default function OverviewView() {
           <div className="voice-actions">
             <button className="btn" type="button" onClick={startVoice}>
               <LucideIcon name="Mic" />
-              <span>Speak</span>
+              <span>{listening ? "Listening" : "Speak"}</span>
             </button>
             <button className="btn secondary" type="button" onClick={stopVoice}>
               <LucideIcon name="Square" />

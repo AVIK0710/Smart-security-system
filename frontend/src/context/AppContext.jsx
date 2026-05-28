@@ -23,6 +23,7 @@ const KNOWN_PEOPLE_KEY = "smart_home_known_people";
 const TOKEN_KEY = "smart_home_token";
 const EVENTS_KEY = "smart_home_live_feed";
 const EVENT_RETENTION_MS = 72 * 60 * 60 * 1000;
+const REFRESH_COOLDOWN_MS = 5000;
 
 function pruneEvents(items) {
   const cutoff = Date.now() - EVENT_RETENTION_MS;
@@ -40,6 +41,7 @@ function loadStoredEvents() {
 
 export function AppProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [currentUser, setCurrentUser] = useState(null);
   const [currentView, setCurrentView] = useState("overview");
   const [devices, setDevices] = useState([]);
   const [dashboard, setDashboard] = useState({});
@@ -67,6 +69,8 @@ export function AppProvider({ children }) {
 
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
+  const refreshInFlightRef = useRef(false);
+  const lastRefreshAtRef = useRef(0);
   const tempChartRef = useRef(null);
   const humidityChartRef = useRef(null);
   const tempCanvasRef = useRef(null);
@@ -178,6 +182,34 @@ export function AppProvider({ children }) {
     localStorage.setItem(EVENTS_KEY, JSON.stringify(normalized));
   }, [token, normalizeBackendEvents]);
 
+  const loadCurrentUser = useCallback(async (authToken = token) => {
+    if (!authToken) return null;
+    const data = await api("/protected", { headers: authHeaders(authToken) });
+    const user = {
+      username: data.user,
+      email: data.email,
+      organizationId: data.organization_id,
+    };
+    setCurrentUser(user);
+    return user;
+  }, [token]);
+
+  const pulseDemoDevices = useCallback(async (authToken = token) => {
+    if (!authToken) return false;
+    try {
+      const data = await api("/devices/demo/pulse", {
+        method: "POST",
+        headers: authHeaders(authToken),
+      });
+      return data.updated > 0;
+    } catch (error) {
+      if (String(error.message).includes("Cannot reach backend")) {
+        setBackendStatus("offline");
+      }
+      return false;
+    }
+  }, [token]);
+
   const loadCommandStatus = useCallback(async (deviceData, authToken = token) => {
     if (!authToken || !deviceData.length) {
       setCommandsByDevice({});
@@ -227,14 +259,23 @@ export function AppProvider({ children }) {
   }, [token, telemetryDeviceId, toast, renderMotion]);
 
   const refreshAll = useCallback(
-    async (authToken = token) => {
-      await checkBackend();
+    async (authToken = token, options = {}) => {
+      const now = Date.now();
+      if (refreshInFlightRef.current) return;
+      if (!options.force && now - lastRefreshAtRef.current < REFRESH_COOLDOWN_MS) return;
+      refreshInFlightRef.current = true;
+      lastRefreshAtRef.current = now;
+
       if (!authToken) {
         switchView("access");
+        refreshInFlightRef.current = false;
         return;
       }
       try {
         const headers = authHeaders(authToken);
+        if (!currentUser) {
+          loadCurrentUser(authToken).catch(() => null);
+        }
         const [deviceData, dashboardData, sceneData, ruleData, eventData] = await Promise.all([
           api("/devices", { headers }),
           api("/dashboard", { headers }),
@@ -258,18 +299,24 @@ export function AppProvider({ children }) {
         if (selectedDeviceId) {
           await loadTelemetryHistory(authToken, selectedDeviceId);
         }
+        setBackendStatus("online");
       } catch (error) {
         if (String(error.message).toLowerCase().includes("credentials")) {
           localStorage.removeItem(TOKEN_KEY);
           setToken(null);
+          setCurrentUser(null);
           switchView("access");
           toast("Session expired. Please log in again.");
           return;
         }
-        toast(error.message);
+        if (!String(error.message).includes("Too many requests")) {
+          toast(error.message);
+        }
+      } finally {
+        refreshInFlightRef.current = false;
       }
     },
-    [checkBackend, token, switchView, telemetryDeviceId, loadTelemetryHistory, toast, normalizeBackendEvents, loadCommandStatus],
+    [token, switchView, telemetryDeviceId, loadTelemetryHistory, toast, normalizeBackendEvents, loadCommandStatus, loadCurrentUser, currentUser],
   );
 
   const sendCommand = useCallback(
@@ -279,10 +326,20 @@ export function AppProvider({ children }) {
           `/devices/${deviceId}/command?command_type=${encodeURIComponent(commandType)}`,
           { method: "POST", headers: authHeaders(token) },
         );
+        const nextState = data.state || (commandType === "TURN_ON" ? "ON" : "OFF");
+        const hasOnlineStatus = Object.prototype.hasOwnProperty.call(data, "is_online");
+        const nextOnline = hasOnlineStatus ? Boolean(data.is_online) : commandType === "TURN_ON";
+        const nextPresence = {
+          state: nextState,
+          is_online: nextOnline,
+          presence_label: data.presence_label || (nextOnline ? "Live now" : "Offline"),
+          presence_age_seconds: data.presence_age_seconds ?? 0,
+          last_seen: data.last_seen || new Date().toISOString(),
+        };
         setDevices((prev) =>
           prev.map((device) =>
             device.device_id === deviceId
-              ? { ...device, state: data.state || (commandType === "TURN_ON" ? "ON" : "OFF") }
+              ? { ...device, ...nextPresence }
               : device,
           ),
         );
@@ -292,7 +349,7 @@ export function AppProvider({ children }) {
               room,
               roomDevices.map((device) =>
                 device.device_id === deviceId
-                  ? { ...device, state: data.state || (commandType === "TURN_ON" ? "ON" : "OFF") }
+                  ? { ...device, ...nextPresence }
                   : device,
               ),
             ]),
@@ -318,7 +375,7 @@ export function AppProvider({ children }) {
           response: data,
         });
         toast(`${commandType} sent`);
-        await refreshAll();
+        await refreshAll(token, { force: true });
       } catch (error) {
         toast(error.message);
       }
@@ -335,7 +392,7 @@ export function AppProvider({ children }) {
         });
         addEvent({ event: `${source}_scene_run`, scene_id: sceneId, response: data });
         toast("Scene started");
-        await refreshAll();
+        await refreshAll(token, { force: true });
       } catch (error) {
         toast(error.message);
       }
@@ -387,7 +444,9 @@ export function AppProvider({ children }) {
       const data = JSON.parse(message.data);
       addEvent(data);
       if (data.event === "telemetry") addLiveTelemetry(data);
-      refreshAll();
+      if (data.event !== "demo_devices_pulsed" && data.event !== "heartbeat") {
+        refreshAll(undefined, { force: true });
+      }
     };
 
     socket.onerror = () => {
@@ -452,47 +511,93 @@ export function AppProvider({ children }) {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = "en-IN";
-    recognition.interimResults = false;
+    recognition.lang = navigator.language?.startsWith("en") ? navigator.language : "en-IN";
+    recognition.interimResults = true;
     recognition.continuous = false;
+    recognition.maxAlternatives = 3;
 
     recognition.onstart = () => {
       setListening(true);
       setVoiceStatus("listening");
-      setVoiceResult("Listening...");
+      setVoiceTranscript("Listening now...");
+      setVoiceResult("Speak a command clearly.");
+    };
+
+    recognition.onspeechstart = () => {
+      setVoiceResult("Speech detected. Converting to text...");
+    };
+
+    recognition.onspeechend = () => {
+      setVoiceResult("Processing command...");
     };
 
     recognition.onresult = (event) => {
-      const spokenText = event.results[0][0].transcript;
-      handleVoiceCommand(spokenText);
+      const results = Array.from(event.results);
+      const transcript = results
+        .map((result) => result[0]?.transcript || "")
+        .join(" ")
+        .trim();
+
+      if (transcript) {
+        setVoiceTranscript(transcript);
+      }
+
+      const finalResult = results.find((result) => result.isFinal);
+      if (finalResult?.[0]?.transcript) {
+        handleVoiceCommand(finalResult[0].transcript);
+      }
     };
 
     recognition.onerror = (event) => {
-      toast(`Voice error: ${event.error}`);
+      const messages = {
+        "not-allowed": "Microphone permission is blocked. Allow mic access in the browser and try again.",
+        "no-speech": "No speech was detected. Try again closer to the mic, or type the command below.",
+        "audio-capture": "No microphone was found. Check your input device.",
+        network: "Speech recognition service is unavailable. Type the command below.",
+      };
+      const message = messages[event.error] || `Voice error: ${event.error}`;
+      toast(message);
       setVoiceStatus("ready");
       setListening(false);
-      setVoiceResult("Voice was interrupted. Try again or type the command.");
+      setVoiceResult(message);
     };
 
     recognition.onend = () => {
       setListening(false);
-      setVoiceStatus("ready");
+      setVoiceStatus((status) => (status === "unsupported" ? status : "ready"));
     };
 
     recognitionRef.current = recognition;
     setVoiceStatus("ready");
   }, [handleVoiceCommand, toast]);
 
-  const startVoice = useCallback(() => {
+  const startVoice = useCallback(async () => {
     if (!recognitionRef.current) initVoiceRecognition();
     if (!recognitionRef.current || listening) return;
     switchView("overview");
+
+    if (!window.isSecureContext) {
+      setVoiceStatus("unsupported");
+      setVoiceResult("Microphone needs localhost or HTTPS. Open the app at http://localhost:5173.");
+      return;
+    }
+
     try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      setVoiceTranscript("Listening now...");
       recognitionRef.current.start();
-    } catch {
+    } catch (error) {
       setListening(false);
       setVoiceStatus("ready");
-      setVoiceResult("Voice is already active. Stop it and try again.");
+      const denied = error?.name === "NotAllowedError" || error?.name === "SecurityError";
+      setVoiceResult(
+        denied
+          ? "Microphone permission is blocked. Allow it in the browser and try again."
+          : "Voice is already active or unavailable. Stop it and try again.",
+      );
     }
   }, [initVoiceRecognition, listening, switchView]);
 
@@ -503,6 +608,7 @@ export function AppProvider({ children }) {
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     setToken(null);
+    setCurrentUser(null);
     setDevices([]);
     setDashboard({});
     setCommandsByDevice({});
@@ -521,6 +627,7 @@ export function AppProvider({ children }) {
       const accessToken = data.access_token;
       localStorage.setItem(TOKEN_KEY, accessToken);
       setToken(accessToken);
+      setCurrentUser(data.user || { username, email: username.includes("@") ? username : "" });
       setBackendStatus("online");
       connectWebSocket();
       switchView("overview");
@@ -586,7 +693,7 @@ export function AppProvider({ children }) {
         { id: Date.now(), label: "Device credentials", data },
         ...prev,
       ]);
-      await refreshAll();
+      await refreshAll(token, { force: true });
       toast("Device registered");
     },
     [token, refreshAll, toast],
@@ -599,7 +706,7 @@ export function AppProvider({ children }) {
         headers: authHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
-      await refreshAll();
+      await refreshAll(token, { force: true });
       toast("Device updated");
     },
     [token, refreshAll, toast],
@@ -611,7 +718,7 @@ export function AppProvider({ children }) {
         method: "DELETE",
         headers: authHeaders(token),
       });
-      await refreshAll();
+      await refreshAll(token, { force: true });
       toast("Device deleted");
     },
     [token, refreshAll, toast],
@@ -842,13 +949,36 @@ export function AppProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (token) {
-      connectWebSocket();
-      refreshAll();
+      checkBackend().then((online) => {
+        if (cancelled || !online) return;
+        connectWebSocket();
+        pulseDemoDevices(token).then((updated) => {
+          if (updated) refreshAll(token, { force: true });
+        });
+        refreshAll(token, { force: true });
+      });
     } else {
       switchView("access");
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!token || backendStatus !== "online") return undefined;
+
+    const intervalId = window.setInterval(async () => {
+      const updated = await pulseDemoDevices(token);
+      if (updated) refreshAll(token, { force: true });
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [token, backendStatus, pulseDemoDevices, refreshAll]);
 
   useEffect(() => {
     initTelemetryCharts();
@@ -869,6 +999,7 @@ export function AppProvider({ children }) {
 
   const value = {
     token,
+    currentUser,
     currentView,
     switchView,
     goToLogin,

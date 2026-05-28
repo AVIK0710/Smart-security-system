@@ -20,6 +20,15 @@ export function roomImage(room) {
   return "https://img.icons8.com/clouds/200/living-room.png";
 }
 
+export function roomIcon(room) {
+  const value = normalizeText(room);
+  if (value.includes("bed")) return "BedDouble";
+  if (value.includes("kitchen")) return "CookingPot";
+  if (value.includes("bath")) return "Bath";
+  if (value.includes("entrance") || value.includes("entry")) return "DoorOpen";
+  return "Sofa";
+}
+
 export function deviceImage(device) {
   const value = normalizeText(`${device.device_name} ${device.device_type}`);
   if (value.includes("ac") || value.includes("air")) return "https://img.icons8.com/clouds/160/air-conditioner.png";
@@ -32,6 +41,20 @@ export function deviceImage(device) {
   if (value.includes("camera")) return "https://img.icons8.com/clouds/160/camera.png";
   if (value.includes("sensor") || value.includes("motion")) return "https://img.icons8.com/clouds/160/sensor.png";
   return "https://img.icons8.com/clouds/160/light.png";
+}
+
+export function deviceIcon(device) {
+  const value = normalizeText(`${device.device_name} ${device.device_type}`);
+  if (value.includes("ac") || value.includes("air")) return "Snowflake";
+  if (value.includes("fan")) return "Fan";
+  if (value.includes("tv")) return "Monitor";
+  if (value.includes("curtain")) return "Blinds";
+  if (value.includes("speaker")) return "Volume2";
+  if (value.includes("socket") || value.includes("plug")) return "Plug";
+  if (value.includes("lock")) return "Lock";
+  if (value.includes("camera")) return "Cctv";
+  if (value.includes("sensor") || value.includes("motion")) return "Radar";
+  return "Lightbulb";
 }
 
 export function findBestDevice(devices, commandText) {

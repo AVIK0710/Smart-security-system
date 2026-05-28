@@ -254,6 +254,11 @@ button {
   cursor: pointer;
 }
 
+.round-btn.active {
+  background: #eafbf0;
+  color: var(--green);
+}
+
 .notification-btn::after {
   content: "";
   position: absolute;
@@ -265,11 +270,48 @@ button {
   background: var(--red);
 }
 
-.avatar img {
-  width: 58px;
-  height: 58px;
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 6px 14px 6px 6px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  object-fit: cover;
+  background: var(--surface);
+  box-shadow: var(--soft-shadow);
+}
+
+.account-chip .avatar {
+  width: 46px;
+  height: 46px;
+  background: linear-gradient(135deg, #0f172a, #2563eb);
+  color: #ffffff;
+  box-shadow: none;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.account-copy {
+  display: grid;
+  gap: 2px;
+  max-width: 150px;
+}
+
+.account-copy strong,
+.account-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-copy strong {
+  font-size: 13px;
+}
+
+.account-copy span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .btn {
@@ -367,11 +409,16 @@ button {
   box-shadow: 0 14px 30px rgba(36, 107, 255, 0.12);
 }
 
-.room-card img {
-  width: 100%;
-  height: 104px;
-  object-fit: contain;
-  margin-bottom: 10px;
+.room-icon {
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 86px;
+  margin: 6px auto 18px;
+  border: 1px solid #d8e4f7;
+  border-radius: 18px;
+  background: #f4f8ff;
+  color: var(--blue);
 }
 
 .room-card h4 {
@@ -467,10 +514,25 @@ button {
   background: linear-gradient(180deg, #ffffff, #f8fbff);
 }
 
-.device-card img {
+.device-icon {
+  display: grid;
+  place-items: center;
   width: 72px;
   height: 72px;
-  object-fit: contain;
+  border: 1px solid #d8e4f7;
+  border-radius: 18px;
+  background: #f4f8ff;
+  color: var(--blue);
+}
+
+.device-card.online .device-icon {
+  border-color: rgba(37, 168, 67, 0.28);
+  background: #eefbf2;
+  color: var(--green);
+}
+
+.device-card.offline .device-icon {
+  color: #64748b;
 }
 
 .device-title-row {
@@ -587,10 +649,21 @@ button {
 .device-health {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.device-health strong {
+  color: var(--text);
+}
+
+.device-health span:not(.green-dot):not(:last-child)::after {
+  content: "|";
+  margin-left: 8px;
+  color: #9aa8bd;
 }
 
 .command-status {

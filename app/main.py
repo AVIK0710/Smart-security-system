@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import secrets
 import smtplib
@@ -28,6 +29,7 @@ from .config import (
     AUTH_RATE_LIMIT_REQUESTS,
     AUTH_RATE_LIMIT_WINDOW_SECONDS,
     EXPOSE_RESET_OTP,
+    ENABLE_DEMO_DEVICE_PULSE,
     RATE_LIMIT_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
     RESET_OTP_EXPIRE_MINUTES,
@@ -65,6 +67,8 @@ Base.metadata.create_all(bind=engine)
 RATE_LIMIT_BUCKETS: dict[str, deque] = defaultdict(deque)
 AUTH_PATHS = {"/login", "/register", "/password/forgot", "/password/verify-otp", "/password/reset"}
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+DEVICE_ONLINE_THRESHOLD_SECONDS = 75
+DEMO_DEVICE_NAMES = {"Living Room Light", "Living Room Fan", "Entry Motion Sensor"}
 
 
 def ensure_sqlite_schema() -> None:
@@ -179,6 +183,41 @@ def normalize_email(email: str) -> str:
     if not EMAIL_PATTERN.match(normalized):
         raise HTTPException(status_code=400, detail="Enter a valid email address")
     return normalized
+
+
+def device_presence(device: models.Device, now: datetime | None = None) -> dict:
+    now = now or datetime.utcnow()
+    seconds_since_seen = (now - device.last_seen).total_seconds() if device.last_seen else None
+    is_active_sensor = (
+        device.is_active
+        and device.device_type == "sensor"
+        and str(device.current_state).upper() == "ACTIVE"
+    )
+    is_powered_on = str(device.current_state).upper() == "ON"
+    is_online = device.is_active and (is_active_sensor or is_powered_on)
+    age = None if seconds_since_seen is None else max(0, int(seconds_since_seen))
+
+    if is_active_sensor:
+        label = "Monitoring"
+    elif not device.is_active:
+        label = "Inactive"
+    elif not is_powered_on:
+        label = "Offline"
+    elif age is None:
+        label = "Online"
+    elif age < 10:
+        label = "Live now"
+    elif age < DEVICE_ONLINE_THRESHOLD_SECONDS:
+        label = f"Seen {age}s ago"
+    else:
+        label = "Online"
+
+    return {
+        "is_online": is_online,
+        "last_seen": device.last_seen,
+        "presence_age_seconds": age,
+        "presence_label": label,
+    }
 
 
 def send_password_reset_otp(email: str, otp: str) -> bool:
@@ -397,7 +436,15 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     )
     db.commit()
     access_token = create_access_token({"sub": db_user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "username": db_user.username,
+            "email": db_user.email,
+            "organization_id": db_user.organization_id,
+        },
+    }
 
 
 @app.post("/password/forgot")
@@ -536,6 +583,7 @@ def protected_route(current_user: models.User = Depends(get_current_user)):
     return {
         "message": "Access granted",
         "user": current_user.username,
+        "email": current_user.email,
         "organization_id": current_user.organization_id
     }
 
@@ -928,13 +976,10 @@ def list_devices(
         models.Device.organization_id == current_user.organization_id
     ).all()
 
-    result = []
     now = datetime.utcnow()
+    result = []
 
     for device in devices:
-        seconds_since_seen = (now - device.last_seen).total_seconds()
-        is_online = seconds_since_seen < 60
-
         result.append({
             "device_id": device.id,
             "device_name": device.name,
@@ -942,11 +987,66 @@ def list_devices(
             "room": device.room,
             "state": device.current_state,
             "device_uid": device.device_uid,
-            "is_online": is_online,
-            "last_seen": device.last_seen
+            "is_demo_device": device.name in DEMO_DEVICE_NAMES,
+            **device_presence(device, now),
         })
 
     return result
+
+
+@app.post("/devices/demo/pulse")
+async def pulse_demo_devices(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not ENABLE_DEMO_DEVICE_PULSE:
+        return {"message": "Demo device pulse is disabled", "updated": 0}
+
+    now = datetime.utcnow()
+    devices = db.query(models.Device).filter(
+        models.Device.organization_id == current_user.organization_id,
+        models.Device.name.in_(DEMO_DEVICE_NAMES)
+    ).all()
+
+    updated = []
+    cycle = int(now.timestamp() // 30)
+    for index, device in enumerate(devices):
+        is_active_sensor = (
+            device.device_type == "sensor"
+            and str(device.current_state).upper() == "ACTIVE"
+        )
+        online = is_active_sensor or (cycle + index) % 5 != 0
+        device.last_seen = now - timedelta(seconds=random.randint(0, 12) if online else 140)
+        presence = device_presence(device, now)
+        updated.append({
+            "device_id": device.id,
+            "device_name": device.name,
+            **presence,
+            "last_seen": presence["last_seen"].isoformat() if presence["last_seen"] else None,
+        })
+
+        if device.device_type == "sensor" and online:
+            db.add(models.DeviceTelemetry(
+                device_id=device.id,
+                organization_id=device.organization_id,
+                temperature=str(round(random.uniform(24, 32), 1)),
+                humidity=str(round(random.uniform(42, 68), 1)),
+                motion_detected=random.choice([False, False, True]),
+            ))
+
+    if updated:
+        record_event(
+            db,
+            "demo_devices_pulsed",
+            current_user.organization_id,
+            "Demo devices updated live presence",
+            {"devices": updated},
+        )
+
+    db.commit()
+    await manager.broadcast({"event": "demo_devices_pulsed", "devices": updated})
+
+    return {"message": "Demo devices pulsed", "updated": len(updated), "devices": updated}
 
 
 @app.post("/devices/{device_id}/command")
@@ -976,9 +1076,11 @@ async def create_command(
         device.current_state = "ON"
     elif command_type == "TURN_OFF":
         device.current_state = "OFF"
+    device.last_seen = datetime.utcnow()
 
     db.add(command)
     db.flush()
+    presence = device_presence(device)
     record_event(
         db,
         "command_created",
@@ -991,6 +1093,7 @@ async def create_command(
             "command_type": command_type,
             "state": device.current_state,
             "status": command.status,
+            "is_online": presence["is_online"],
         },
     )
     db.commit()
@@ -1004,6 +1107,8 @@ async def create_command(
         "command_type": command.command_type,
         "payload": command.payload,
         "state": device.current_state,
+        "is_online": presence["is_online"],
+        "presence_label": presence["presence_label"],
     })
 
     return {
@@ -1011,6 +1116,10 @@ async def create_command(
         "command_id": command.id,
         "status": command.status,
         "state": device.current_state,
+        "is_online": presence["is_online"],
+        "presence_label": presence["presence_label"],
+        "presence_age_seconds": presence["presence_age_seconds"],
+        "last_seen": presence["last_seen"],
     }
 
 
@@ -1090,6 +1199,8 @@ async def complete_command(
         device.current_state = "ON"
     elif command.command_type == "TURN_OFF":
         device.current_state = "OFF"
+    device.last_seen = datetime.utcnow()
+    presence = device_presence(device)
 
     record_event(
         db,
@@ -1103,6 +1214,7 @@ async def complete_command(
             "command_type": command.command_type,
             "state": device.current_state,
             "status": command.status,
+            "is_online": presence["is_online"],
         },
     )
     db.commit()
@@ -1113,7 +1225,9 @@ async def complete_command(
         "device_id": device.id,
         "device_name": device.name,
         "command_type": command.command_type,
-        "state": device.current_state
+        "state": device.current_state,
+        "is_online": presence["is_online"],
+        "presence_label": presence["presence_label"],
     })
 
     return {"message": "Command marked as executed"}
@@ -1141,7 +1255,7 @@ def dashboard(
             "device_name": device.name,
             "device_type": device.device_type,
             "state": device.current_state,
-            "is_online": (datetime.utcnow() - device.last_seen).total_seconds() < 60
+            **device_presence(device),
         })
 
     return result
@@ -1357,12 +1471,22 @@ async def run_scene(
         db.add(command)
         db.flush()
 
+        if action.command_type == "TURN_ON":
+            device.current_state = "ON"
+        elif action.command_type == "TURN_OFF":
+            device.current_state = "OFF"
+        device.last_seen = datetime.utcnow()
+        presence = device_presence(device)
+
         created_commands.append({
             "device_id": device.id,
             "device_name": device.name,
             "command_id": command.id,
             "command_type": command.command_type,
-            "payload": command.payload
+            "payload": command.payload,
+            "state": device.current_state,
+            "is_online": presence["is_online"],
+            "presence_label": presence["presence_label"],
         })
 
     db.commit()

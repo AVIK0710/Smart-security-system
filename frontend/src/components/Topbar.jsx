@@ -5,8 +5,10 @@ import LucideIcon from "./LucideIcon.jsx";
 export default function Topbar() {
   const {
     token,
+    currentUser,
     currentView,
     metrics,
+    listening,
     refreshAll,
     startVoice,
     logout,
@@ -15,6 +17,15 @@ export default function Topbar() {
   } = useApp();
 
   const [title, subtitle] = VIEW_TITLES[currentView] || VIEW_TITLES.overview;
+  const displayName = currentUser?.username || "Account";
+  const displayEmail = currentUser?.email || "Signed in";
+  const initials = displayName
+    .split(/\s|_/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "U";
 
   return (
     <header className="topbar">
@@ -37,17 +48,18 @@ export default function Topbar() {
           </>
         ) : (
           <>
-            <button className="round-btn" type="button" title="Voice command" onClick={startVoice}>
+            <button className={`round-btn${listening ? " active" : ""}`} type="button" title="Voice command" onClick={startVoice}>
               <LucideIcon name="Mic" />
             </button>
             <button className="notification-btn" type="button" title="Notifications">
               <LucideIcon name="Bell" />
             </button>
-            <div className="avatar">
-              <img
-                alt="Profile"
-                src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=120&q=80"
-              />
+            <div className="account-chip" title={displayEmail}>
+              <div className="avatar" aria-hidden="true">{initials}</div>
+              <div className="account-copy">
+                <strong>{displayName}</strong>
+                <span>{displayEmail}</span>
+              </div>
             </div>
             <button
               className="btn secondary hidden"
