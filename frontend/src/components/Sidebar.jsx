@@ -25,7 +25,7 @@ const STATUS_ICONS = {
   },
 };
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }) {
   const {
     token,
     currentUser,
@@ -44,6 +44,14 @@ export default function Sidebar() {
   const voice = STATUS_ICONS.voice[voiceStatus] || STATUS_ICONS.voice.idle;
   const displayName = currentUser?.username || "krishna";
   const initial = displayName[0]?.toUpperCase() || "K";
+  const navigate = (viewId) => {
+    switchView(viewId);
+    onNavigate?.();
+  };
+  const openAccount = () => {
+    goToLogin();
+    onNavigate?.();
+  };
 
   return (
     <aside className="sidebar">
@@ -64,7 +72,7 @@ export default function Sidebar() {
             type="button"
             className={currentView === item.id ? "active" : ""}
             title={item.label}
-            onClick={() => switchView(item.id)}
+            onClick={() => navigate(item.id)}
           >
             <LucideIcon name={item.icon} />
             <span>{item.label}</span>
@@ -74,7 +82,7 @@ export default function Sidebar() {
           type="button"
           className={currentView === AUTH_NAV_ITEM.id ? "active" : ""}
           title={authNavLabel}
-          onClick={() => switchView(AUTH_NAV_ITEM.id)}
+          onClick={() => navigate(AUTH_NAV_ITEM.id)}
         >
           <LucideIcon name={AUTH_NAV_ITEM.icon} />
           <span>{authNavLabel}</span>
@@ -85,13 +93,13 @@ export default function Sidebar() {
         <button
           type="button"
           className="sidebar-profile"
-          onClick={goToLogin}
+          onClick={openAccount}
           title={token ? "Account settings" : "Login or register"}
         >
           <span className="sidebar-avatar">{initial}</span>
           <span>
             <strong>{displayName}</strong>
-            <small>{token ? "Premium Plan" : "Sign in"}</small>
+            <small>{token ? "Free Plan" : "Sign in"}</small>
           </span>
           <LucideIcon name="ChevronDown" />
         </button>
@@ -113,7 +121,7 @@ export default function Sidebar() {
         <button
           type="button"
           className="connection-pill auth-pill hidden"
-          onClick={goToLogin}
+          onClick={openAccount}
           title={token ? "Account settings" : "Login or register"}
         >
           <LucideIcon name={auth[0]} />

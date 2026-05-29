@@ -87,6 +87,7 @@ export default function SchedulesView() {
   const [showCreate, setShowCreate] = useState(false);
 
   const deviceId = sceneDevice || (devices[0] ? String(devices[0].device_id) : "");
+  const usingSampleSchedules = !scenes.length;
   const schedules = useMemo(
     () => (scenes.length ? scenes.map(scheduleFromScene) : DEMO_SCHEDULES),
     [scenes],
@@ -239,9 +240,16 @@ export default function SchedulesView() {
         )}
 
         <section className="schedule-list-panel">
+          {usingSampleSchedules ? (
+            <p className="sample-data-banner">Sample schedules shown — add a schedule to create real scenes.</p>
+          ) : null}
           <div className="schedule-list" aria-live="polite">
             {!visibleSchedules.length ? (
-              <div className="empty">No schedules match your search</div>
+              <div className="empty">
+                {scenes.length
+                  ? "No schedules match your search"
+                  : "Create a schedule (scene) to run device commands on demand from the dashboard."}
+              </div>
             ) : (
               visibleSchedules.map((schedule) => (
                 <article className="schedule-row" key={schedule.id}>

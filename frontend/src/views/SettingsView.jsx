@@ -3,6 +3,7 @@ import { useApp } from "../context/AppContext.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
 
 const SETTINGS_STORAGE_KEY = "smart_home_settings_preferences";
+const SETTINGS_ACTIVE_TAB_KEY = "smart_home_settings_active_tab";
 const EVENTS_KEY = "smart_home_live_feed";
 
 const SETTINGS_TABS = [
@@ -73,6 +74,11 @@ function loadStoredSettings() {
   }
 }
 
+function requestedSettingsTab() {
+  const requested = localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY);
+  return SETTINGS_TABS.some(([id]) => id === requested) ? requested : "general";
+}
+
 function downloadJson(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -98,7 +104,7 @@ export default function SettingsView() {
     toast,
   } = useApp();
   const storedSettings = useMemo(loadStoredSettings, []);
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState(requestedSettingsTab);
   const [query, setQuery] = useState("");
   const [homeName, setHomeName] = useState(
     storedSettings.homeName || `${currentUser?.username || "Krishna"}'s Smart Home`,
@@ -120,6 +126,17 @@ export default function SettingsView() {
     localStorage.setItem("smart_home_language", language);
     window.dispatchEvent(new CustomEvent("smart-home-language-change", { detail: { language } }));
   }, [language]);
+
+  useEffect(() => {
+    const handleSettingsTab = (event) => {
+      const tab = event.detail?.tab || requestedSettingsTab();
+      if (SETTINGS_TABS.some(([id]) => id === tab)) {
+        setActiveTab(tab);
+      }
+    };
+    window.addEventListener("smart-home-settings-tab", handleSettingsTab);
+    return () => window.removeEventListener("smart-home-settings-tab", handleSettingsTab);
+  }, []);
 
   const settingsRows = useMemo(
     () => {
@@ -318,7 +335,10 @@ export default function SettingsView() {
               key={id}
               type="button"
               className={activeTab === id ? "active" : ""}
-              onClick={() => setActiveTab(id)}
+              onClick={() => {
+                localStorage.setItem(SETTINGS_ACTIVE_TAB_KEY, id);
+                setActiveTab(id);
+              }}
             >
               <LucideIcon name={icon} />
               <span>{label}</span>

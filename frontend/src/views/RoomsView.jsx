@@ -1,19 +1,9 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, authHeaders } from "../api/client.js";
 import { useApp } from "../context/AppContext.jsx";
 import DeviceCard from "../components/DeviceCard.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
 import { DEVICE_TYPES, normalizeText, roomIcon, roomImage } from "../utils/helpers.js";
-
-const ROOMS_KEY = "smart_home_custom_rooms";
-
-function loadCustomRooms() {
-  try {
-    const items = JSON.parse(localStorage.getItem(ROOMS_KEY) || "[]");
-    return Array.isArray(items) ? items.filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
 
 export default function RoomsView() {
   const {
@@ -21,13 +11,16 @@ export default function RoomsView() {
     devices,
     commandsByDevice,
     sendCommand,
+    token,
+    toast,
+    refreshAll,
     registerDevice,
     updateDevice,
     deleteDevice,
   } = useApp();
   const [search, setSearch] = useState("");
   const [layout, setLayout] = useState("grid");
-  const [customRooms, setCustomRooms] = useState(loadCustomRooms);
+  const [serverRooms, setServerRooms] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [roomName, setRoomName] = useState("");
   const [selectedRoom, setSelectedRoom] = useState("");
@@ -39,33 +32,49 @@ export default function RoomsView() {
   const [newDeviceName, setNewDeviceName] = useState("");
   const [newDeviceType, setNewDeviceType] = useState("light");
 
+  const loadServerRooms = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await api("/rooms", { headers: authHeaders(token) });
+      setServerRooms(Array.isArray(data) ? data : []);
+    } catch {
+      setServerRooms([]);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadServerRooms();
+  }, [loadServerRooms]);
+
   const rooms = useMemo(() => {
     const roomsByName = new Map();
 
-    roomEntries.forEach(([room, roomDevices]) => {
-      const online = roomDevices.filter((device) => device.is_online).length;
-      roomsByName.set(normalizeText(room), {
-        name: room,
-        count: roomDevices.length,
-        online,
+    roomEntries.forEach((entry) => {
+      roomsByName.set(normalizeText(entry.name), {
+        name: entry.name,
+        count: entry.count,
+        online: entry.online,
+        temperature: entry.temperature,
         source: "devices",
       });
     });
 
-    customRooms.forEach((room) => {
-      const key = normalizeText(room);
+    serverRooms.forEach((room) => {
+      const key = normalizeText(room.name);
       if (!roomsByName.has(key)) {
         roomsByName.set(key, {
-          name: room,
+          name: room.name,
           count: 0,
           online: 0,
-          source: "custom",
+          temperature: null,
+          source: "server",
+          room_id: room.room_id,
         });
       }
     });
 
     return Array.from(roomsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [roomEntries, customRooms]);
+  }, [roomEntries, serverRooms]);
 
   const filteredRooms = rooms.filter((room) =>
     normalizeText(room.name).includes(normalizeText(search)),
@@ -85,20 +94,25 @@ export default function RoomsView() {
 
   const canDeleteRoom = (room) => normalizeText(room.name) !== "unassigned";
 
-  const saveCustomRooms = (nextRooms) => {
-    setCustomRooms(nextRooms);
-    localStorage.setItem(ROOMS_KEY, JSON.stringify(nextRooms));
-  };
-
-  const handleAddRoom = (event) => {
+  const handleAddRoom = async (event) => {
     event.preventDefault();
     const nextRoom = roomName.trim();
-    if (!nextRoom) return;
+    if (!nextRoom || !token) return;
 
     const exists = rooms.some((room) => normalizeText(room.name) === normalizeText(nextRoom));
     if (!exists) {
-      const nextRooms = [...customRooms, nextRoom];
-      saveCustomRooms(nextRooms);
+      try {
+        await api("/rooms", {
+          method: "POST",
+          headers: authHeaders(token, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ name: nextRoom }),
+        });
+        await loadServerRooms();
+        await refreshAll(token, { force: true });
+      } catch (error) {
+        toast(error.message);
+        return;
+      }
     }
 
     setSelectedRoom(nextRoom);
@@ -151,23 +165,37 @@ export default function RoomsView() {
       (device) => normalizeText(device.room || "Unassigned") === normalizeText(room.name),
     );
     const message = roomDevices.length
-      ? `Delete ${room.name}? ${roomDevices.length} device${roomDevices.length === 1 ? "" : "s"} will be moved to Unassigned.`
+      ? `Delete ${room.name}? ${roomDevices.length} device${roomDevices.length === 1 ? "" : "s"} in this room will also be deleted.`
       : `Delete ${room.name}?`;
 
     if (!window.confirm(message)) return;
 
-    const nextRooms = customRooms.filter(
-      (item) => normalizeText(item) !== normalizeText(room.name),
-    );
-    saveCustomRooms(nextRooms);
+    try {
+      for (const device of roomDevices) {
+        await api(`/devices/${device.device_id}`, {
+          method: "DELETE",
+          headers: authHeaders(token),
+        });
+      }
 
-    for (const device of roomDevices) {
-      await updateDevice(device.device_id, { room: null });
+      if (room.room_id && token) {
+        await api(`/rooms/${room.room_id}`, {
+          method: "DELETE",
+          headers: authHeaders(token),
+        });
+        setServerRooms((current) => current.filter((item) => item.room_id !== room.room_id));
+      }
+    } catch (error) {
+      toast(error.message);
+      return;
     }
 
     setSelectedRoom("");
     setDetailsDeviceId("");
     setEditingDeviceId("");
+    await loadServerRooms();
+    await refreshAll(token, { force: true });
+    toast(`${room.name} deleted`);
   };
 
   return (

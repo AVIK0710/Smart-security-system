@@ -4,17 +4,13 @@ import LucideIcon from "../components/LucideIcon.jsx";
 import { deviceIcon, normalizeText } from "../utils/helpers.js";
 
 const DEMO_ALERTS = [
-  { id: "motion", icon: "Radar", tone: "purple", title: "Entry Motion Sensor", place: "Living Room", time: "2 minutes ago" },
-  { id: "door-lock", icon: "Lock", tone: "green", title: "Front Door locked", place: "Main Entrance", time: "15 minutes ago" },
-  { id: "window", icon: "PanelTop", tone: "amber", title: "Window opened - Living Room", place: "Living Room", time: "1 hour ago" },
-  { id: "smoke", icon: "Zap", tone: "red", title: "Smoke detected", place: "Kitchen", time: "2 hours ago" },
+  { id: "demo-motion", icon: "Radar", tone: "purple", title: "Entry Motion Sensor", place: "Living Room", time: "Sample" },
+  { id: "demo-door", icon: "Lock", tone: "green", title: "Front Door locked", place: "Main Entrance", time: "Sample" },
 ];
 
 const DEMO_SENSORS = [
   { icon: "Radar", tone: "purple", name: "Entry Motion Sensor", room: "Living Room", status: "ACTIVE", statusTone: "green" },
-  { icon: "PanelTop", tone: "slate", name: "Window Sensor", room: "Bedroom", status: "CLOSED", statusTone: "blue" },
   { icon: "DoorOpen", tone: "blue", name: "Door Sensor", room: "Front Door", status: "CLOSED", statusTone: "blue" },
-  { icon: "Zap", tone: "amber", name: "Smoke Sensor", room: "Kitchen", status: "NORMAL", statusTone: "green" },
 ];
 
 const CAMERA_FEEDS = [
@@ -82,18 +78,25 @@ export default function SecurityView() {
     }));
   }, [devices]);
 
+  const usingSampleSensors = !securityDevices.length;
   const visibleSensors = securityDevices.length ? securityDevices : DEMO_SENSORS;
   const systemHealth = metrics.total ? Math.round((metrics.online / metrics.total) * 100) : 100;
   const alerts = motionEvents.length
-    ? motionEvents.slice(0, 4).map((item, index) => ({
-        icon: "Radar",
-        tone: "purple",
-        title: "Motion detected",
-        place: `Device #${item.device_id}`,
-        time: new Date(item.created_at).toLocaleTimeString(),
-        id: `${item.device_id}-${index}`,
-      }))
-    : DEMO_ALERTS;
+    ? motionEvents.slice(0, 8).map((item, index) => {
+        const device = devices.find((entry) => entry.device_id === item.device_id);
+        return {
+          icon: "Radar",
+          tone: "purple",
+          title: "Motion detected",
+          place: device?.device_name || `Device #${item.device_id}`,
+          time: new Date(item.created_at).toLocaleTimeString(),
+          id: `${item.device_id}-${index}`,
+        };
+      })
+    : usingSampleSensors
+    ? DEMO_ALERTS
+    : [];
+  const usingSampleAlerts = usingSampleSensors && !motionEvents.length;
   const openAlerts = alerts.filter((alert) => !acknowledgedAlerts.has(alert.id || alert.title));
   const visibleAlerts = showAllAlerts ? alerts : openAlerts.slice(0, 4);
   const selectedCamera = CAMERA_FEEDS.find((camera) => camera.id === selectedCameraId) || CAMERA_FEEDS[0];
@@ -122,6 +125,9 @@ export default function SecurityView() {
 
   return (
     <section className="view active security-reference-page">
+      {usingSampleSensors ? (
+        <p className="sample-data-banner">Sample security data shown — register sensors and send telemetry for live alerts.</p>
+      ) : null}
       <div className="security-console-strip">
         <div>
           <span className="security-live-dot" />
@@ -203,8 +209,8 @@ export default function SecurityView() {
               )) : (
                 <div className="security-clear-state">
                   <LucideIcon name="ShieldCheck" />
-                  <strong>No open alerts</strong>
-                  <span>Everything has been acknowledged.</span>
+                  <strong>No motion alerts</strong>
+                  <span>Alerts appear when hardware sends motion telemetry.</span>
                 </div>
               )}
             </div>
@@ -280,7 +286,7 @@ export default function SecurityView() {
               </div>
             </div>
             <div className="security-sensor-list">
-              {filteredSensors.map((sensor) => (
+              {filteredSensors.length ? filteredSensors.map((sensor) => (
                 <article key={sensor.id || sensor.name}>
                   <div className={`security-row-icon ${sensor.tone}`}>
                     <LucideIcon name={sensor.icon} />
@@ -291,7 +297,11 @@ export default function SecurityView() {
                   </div>
                   <small className={sensor.statusTone}>{sensor.status}</small>
                 </article>
-              ))}
+              )) : (
+                <div className="empty">
+                  Register motion, door, lock, or camera devices to populate live security sensors.
+                </div>
+              )}
             </div>
           </section>
         </div>

@@ -16,6 +16,7 @@ import {
   findBestScene,
   normalizeText,
 } from "../utils/helpers.js";
+import { buildRoomEntries, normalizeDashboard } from "../utils/energyUtils.js";
 
 const AppContext = createContext(null);
 
@@ -64,10 +65,14 @@ export function AppProvider({ children }) {
   const [listening, setListening] = useState(false);
 
   const [telemetryDeviceId, setTelemetryDeviceId] = useState("");
+  const [energySummary, setEnergySummary] = useState(null);
   const [motionEvents, setMotionEvents] = useState([]);
   const [authTab, setAuthTab] = useState("login");
 
   const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const wsShouldReconnectRef = useRef(true);
+  const energyRefreshTimerRef = useRef(null);
   const recognitionRef = useRef(null);
   const refreshInFlightRef = useRef(false);
   const lastRefreshAtRef = useRef(0);
@@ -75,6 +80,23 @@ export function AppProvider({ children }) {
   const humidityChartRef = useRef(null);
   const tempCanvasRef = useRef(null);
   const humidityCanvasRef = useRef(null);
+
+  const closeSocket = useCallback(() => {
+    wsShouldReconnectRef.current = false;
+    const socket = socketRef.current;
+    if (!socket) return;
+    socketRef.current = null;
+
+    if (socket.readyState === WebSocket.CONNECTING) {
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = () => setSocketStatus("offline");
+      socket.onopen = () => socket.close();
+      return;
+    }
+
+    socket.close();
+  }, []);
 
   const toast = useCallback((message) => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -126,7 +148,7 @@ export function AppProvider({ children }) {
   const checkBackend = useCallback(async () => {
     setBackendStatus("checking");
     try {
-      await api("/");
+      await api("/health");
       setBackendStatus("online");
       return true;
     } catch {
@@ -148,8 +170,37 @@ export function AppProvider({ children }) {
   const loadDashboard = useCallback(async () => {
     if (!token) return;
     const data = await api("/dashboard", { headers: authHeaders(token) });
-    setDashboard(data);
+    setDashboard(normalizeDashboard(data));
   }, [token]);
+
+  const loadEnergySummary = useCallback(async (range = "today", authToken = token, options = {}) => {
+    if (!authToken) return null;
+    try {
+      const data = await api(`/energy/summary?range=${encodeURIComponent(range)}`, {
+        headers: authHeaders(authToken),
+      });
+      setEnergySummary(data);
+      return data;
+    } catch (error) {
+      if (!options.silent) {
+        toast(error.message);
+      }
+      return null;
+    }
+  }, [token, toast]);
+
+  const scheduleEnergyRefresh = useCallback(
+    (range = "today") => {
+      if (!token) return;
+      if (energyRefreshTimerRef.current) {
+        window.clearTimeout(energyRefreshTimerRef.current);
+      }
+      energyRefreshTimerRef.current = window.setTimeout(() => {
+        loadEnergySummary(range, token, { silent: true });
+      }, 2000);
+    },
+    [token, loadEnergySummary],
+  );
 
   const loadScenes = useCallback(async () => {
     if (!token) return;
@@ -189,6 +240,7 @@ export function AppProvider({ children }) {
       username: data.user,
       email: data.email,
       organizationId: data.organization_id,
+      createdAt: data.created_at,
     };
     setCurrentUser(user);
     return user;
@@ -232,12 +284,8 @@ export function AppProvider({ children }) {
     setCommandsByDevice(Object.fromEntries(entries));
   }, [token]);
 
-  const renderMotion = useCallback((items) => {
-    setMotionEvents(items);
-  }, []);
-
   const loadTelemetryHistory = useCallback(async (authToken = token, deviceId = telemetryDeviceId) => {
-    if (!authToken || !deviceId || !tempChartRef.current) return;
+    if (!authToken || !deviceId || !tempChartRef.current || !humidityChartRef.current) return;
 
     try {
       const telemetry = await api(`/devices/${deviceId}/telemetry?limit=30`, {
@@ -252,11 +300,10 @@ export function AppProvider({ children }) {
       humidityChartRef.current.data.datasets[0].data = sorted.map((item) => Number(item.humidity));
       tempChartRef.current.update();
       humidityChartRef.current.update();
-      renderMotion(sorted.filter((item) => item.motion_detected));
     } catch (error) {
       toast(error.message);
     }
-  }, [token, telemetryDeviceId, toast, renderMotion]);
+  }, [token, telemetryDeviceId, toast]);
 
   const refreshAll = useCallback(
     async (authToken = token, options = {}) => {
@@ -284,7 +331,8 @@ export function AppProvider({ children }) {
           api("/events?limit=100", { headers }),
         ]);
         setDevices(deviceData);
-        setDashboard(dashboardData);
+        setDashboard(normalizeDashboard(dashboardData));
+        await loadEnergySummary("today", authToken);
         setScenes(sceneData);
         setRules(ruleData);
         const normalizedEvents = normalizeBackendEvents(eventData);
@@ -316,7 +364,7 @@ export function AppProvider({ children }) {
         refreshInFlightRef.current = false;
       }
     },
-    [token, switchView, telemetryDeviceId, loadTelemetryHistory, toast, normalizeBackendEvents, loadCommandStatus, loadCurrentUser, currentUser],
+    [token, switchView, telemetryDeviceId, loadTelemetryHistory, loadEnergySummary, toast, normalizeBackendEvents, loadCommandStatus, loadCurrentUser, currentUser],
   );
 
   const sendCommand = useCallback(
@@ -345,13 +393,16 @@ export function AppProvider({ children }) {
         );
         setDashboard((prev) =>
           Object.fromEntries(
-            Object.entries(prev).map(([room, roomDevices]) => [
+            Object.entries(normalizeDashboard(prev)).map(([room, roomData]) => [
               room,
-              roomDevices.map((device) =>
-                device.device_id === deviceId
-                  ? { ...device, ...nextPresence }
-                  : device,
-              ),
+              {
+                ...roomData,
+                devices: roomData.devices.map((device) =>
+                  device.device_id === deviceId
+                    ? { ...device, ...nextPresence }
+                    : device,
+                ),
+              },
             ]),
           ),
         );
@@ -402,48 +453,68 @@ export function AppProvider({ children }) {
 
   const addLiveTelemetry = useCallback(
     (data) => {
-      if (!tempChartRef.current) return;
-      if (telemetryDeviceId && data.device_id !== Number(telemetryDeviceId)) return;
+      const matchesDevice =
+        !telemetryDeviceId || data.device_id === Number(telemetryDeviceId);
 
-      const time = new Date().toLocaleTimeString();
-      tempChartRef.current.data.labels.push(time);
-      tempChartRef.current.data.datasets[0].data.push(Number(data.temperature));
-      humidityChartRef.current.data.labels.push(time);
-      humidityChartRef.current.data.datasets[0].data.push(Number(data.humidity));
+      if (matchesDevice && tempChartRef.current && humidityChartRef.current) {
+        const time = new Date().toLocaleTimeString();
+        tempChartRef.current.data.labels.push(time);
+        tempChartRef.current.data.datasets[0].data.push(Number(data.temperature));
+        humidityChartRef.current.data.labels.push(time);
+        humidityChartRef.current.data.datasets[0].data.push(Number(data.humidity));
 
-      [tempChartRef, humidityChartRef].forEach((ref) => {
-        if (ref.current.data.labels.length > 30) {
-          ref.current.data.labels.shift();
-          ref.current.data.datasets[0].data.shift();
-        }
-        ref.current.update();
-      });
+        [tempChartRef, humidityChartRef].forEach((ref) => {
+          if (ref.current.data.labels.length > 30) {
+            ref.current.data.labels.shift();
+            ref.current.data.datasets[0].data.shift();
+          }
+          ref.current.update();
+        });
+      }
 
       if (data.motion_detected) {
-        renderMotion([
-          { created_at: new Date(), device_id: data.device_id, motion_detected: true },
-        ]);
+        setMotionEvents((prev) =>
+          [
+            { created_at: new Date().toISOString(), device_id: data.device_id, motion_detected: true },
+            ...prev,
+          ].slice(0, 50),
+        );
       }
     },
-    [telemetryDeviceId, renderMotion],
+    [telemetryDeviceId],
   );
 
   const connectWebSocket = useCallback(() => {
-    if (socketRef.current) socketRef.current.close();
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
+    closeSocket();
+
+    wsShouldReconnectRef.current = true;
     setSocketStatus("connecting");
     const socket = new WebSocket(WS_URL);
     socketRef.current = socket;
 
     socket.onopen = () => {
       setSocketStatus("online");
-      addEvent({ event: "websocket_connected" });
     };
 
     socket.onmessage = (message) => {
-      const data = JSON.parse(message.data);
+      let data;
+      try {
+        data = JSON.parse(message.data);
+      } catch {
+        return;
+      }
+      if (data.event === "websocket_connected") return;
       addEvent(data);
-      if (data.event === "telemetry") addLiveTelemetry(data);
+      if (data.event === "telemetry") {
+        addLiveTelemetry(data);
+        scheduleEnergyRefresh("today");
+        return;
+      }
       if (data.event !== "demo_devices_pulsed" && data.event !== "heartbeat") {
         refreshAll(undefined, { force: true });
       }
@@ -451,11 +522,19 @@ export function AppProvider({ children }) {
 
     socket.onerror = () => {
       setSocketStatus("offline");
-      addEvent({ event: "websocket_error" });
     };
 
-    socket.onclose = () => setSocketStatus("offline");
-  }, [addEvent, addLiveTelemetry, refreshAll]);
+    socket.onclose = () => {
+      setSocketStatus("offline");
+      socketRef.current = null;
+      if (!wsShouldReconnectRef.current || !token) return;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        if (wsShouldReconnectRef.current && token) {
+          connectWebSocket();
+        }
+      }, 4000);
+    };
+  }, [addEvent, addLiveTelemetry, scheduleEnergyRefresh, refreshAll, token, closeSocket]);
 
   const handleVoiceCommand = useCallback(
     async (spokenText) => {
@@ -606,16 +685,26 @@ export function AppProvider({ children }) {
   }, [listening]);
 
   const logout = useCallback(() => {
+    closeSocket();
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (energyRefreshTimerRef.current) {
+      window.clearTimeout(energyRefreshTimerRef.current);
+      energyRefreshTimerRef.current = null;
+    }
     localStorage.removeItem(TOKEN_KEY);
     setToken(null);
     setCurrentUser(null);
     setDevices([]);
     setDashboard({});
+    setEnergySummary(null);
+    setMotionEvents([]);
     setCommandsByDevice({});
-    if (socketRef.current) socketRef.current.close();
     setSocketStatus("offline");
     switchView("access");
-  }, [switchView]);
+  }, [switchView, closeSocket]);
 
   const login = useCallback(
     async (username, password) => {
@@ -627,10 +716,15 @@ export function AppProvider({ children }) {
       const accessToken = data.access_token;
       localStorage.setItem(TOKEN_KEY, accessToken);
       setToken(accessToken);
-      setCurrentUser(data.user || { username, email: username.includes("@") ? username : "" });
+      setCurrentUser({
+        username: data.user?.username || username,
+        email: data.user?.email || (username.includes("@") ? username : ""),
+        organizationId: data.user?.organization_id,
+        createdAt: data.user?.created_at,
+      });
       setBackendStatus("online");
       connectWebSocket();
-      switchView("overview");
+      setCurrentView("overview");
       await refreshAll(accessToken);
       toast("Signed in");
       return accessToken;
@@ -843,13 +937,18 @@ export function AppProvider({ children }) {
     if (!tempCanvasRef.current || !humidityCanvasRef.current) return false;
     if (tempChartRef.current && humidityChartRef.current) return true;
 
+    const isDark = document.body.classList.contains("smart-home-dark-mode");
+    const tickColor = isDark ? "#a8b4c8" : "#475569";
+    const gridColor = isDark ? "#2d3b55" : "#e5e7eb";
+    const legendColor = isDark ? "#f8fafc" : "#1f2937";
+
     const baseOptions = {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: "#1f2937" } } },
+      plugins: { legend: { labels: { color: legendColor } } },
       scales: {
-        x: { ticks: { color: "#475569" }, grid: { color: "#e5e7eb" } },
-        y: { ticks: { color: "#475569" }, grid: { color: "#e5e7eb" } },
+        x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+        y: { ticks: { color: tickColor }, grid: { color: gridColor } },
       },
     };
 
@@ -923,9 +1022,9 @@ export function AppProvider({ children }) {
     };
   }, [devices, alerts]);
 
-  const roomEntries = useMemo(() => Object.entries(dashboard), [dashboard]);
-  const selectedRoom = roomEntries[0]?.[0] ?? "Rooms";
-  const selectedRoomCount = roomEntries[0]?.[1]?.length ?? 0;
+  const roomEntries = useMemo(() => buildRoomEntries(dashboard), [dashboard]);
+  const selectedRoom = roomEntries[0]?.name ?? "Rooms";
+  const selectedRoomCount = roomEntries[0]?.count ?? 0;
 
   useEffect(() => {
     initVoiceRecognition();
@@ -966,36 +1065,19 @@ export function AppProvider({ children }) {
 
     return () => {
       cancelled = true;
+      closeSocket();
+      if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
+      if (energyRefreshTimerRef.current) window.clearTimeout(energyRefreshTimerRef.current);
     };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!token || backendStatus !== "online") return undefined;
-
-    const intervalId = window.setInterval(async () => {
-      const updated = await pulseDemoDevices(token);
-      if (updated) refreshAll(token, { force: true });
-    }, 15000);
-
+    const intervalId = window.setInterval(() => {
+      refreshAll(token);
+    }, 30000);
     return () => window.clearInterval(intervalId);
-  }, [token, backendStatus, pulseDemoDevices, refreshAll]);
-
-  useEffect(() => {
-    initTelemetryCharts();
-
-    return () => {
-      tempChartRef.current?.destroy();
-      humidityChartRef.current?.destroy();
-      tempChartRef.current = null;
-      humidityChartRef.current = null;
-    };
-  }, [initTelemetryCharts]);
-
-  useEffect(() => {
-    if (token && telemetryDeviceId && tempChartRef.current) {
-      loadTelemetryHistory();
-    }
-  }, [telemetryDeviceId, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token, backendStatus, refreshAll]);
 
   const value = {
     token,
@@ -1021,6 +1103,8 @@ export function AppProvider({ children }) {
     listening,
     telemetryDeviceId,
     setTelemetryDeviceId,
+    energySummary,
+    loadEnergySummary,
     motionEvents,
     authTab,
     setAuthTab,

@@ -47,6 +47,7 @@ from .device_auth_schemas import DeviceAuthRequest
 from .telemetry_schemas import TelemetryCreate
 from .scene_schemas import SceneCreate, SceneUpdate
 from .rule_schemas import RuleCreate, RuleUpdate
+from .room_schemas import RoomCreate
 from .websocket_manager import manager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -69,6 +70,17 @@ AUTH_PATHS = {"/login", "/register", "/password/forgot", "/password/verify-otp",
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DEVICE_ONLINE_THRESHOLD_SECONDS = 75
 DEMO_DEVICE_NAMES = {"Living Room Light", "Living Room Fan", "Entry Motion Sensor"}
+ESTIMATED_DEVICE_WATTS = {
+    "light": 12,
+    "fan": 75,
+    "ac": 1200,
+    "tv": 110,
+    "socket": 40,
+    "sensor": 2,
+    "camera": 8,
+    "lock": 3,
+}
+ENERGY_RATE_PER_KWH = 8.5
 
 
 def ensure_sqlite_schema() -> None:
@@ -87,6 +99,29 @@ def ensure_sqlite_schema() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN password_reset_token_hash VARCHAR"))
         if "password_reset_expires_at" not in user_columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN password_reset_expires_at DATETIME"))
+        if "created_at" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME"))
+            conn.execute(text("""
+                UPDATE users
+                SET created_at = COALESCE(
+                    (
+                        SELECT organizations.created_at
+                        FROM organizations
+                        WHERE organizations.id = users.organization_id
+                    ),
+                    CURRENT_TIMESTAMP
+                )
+                WHERE created_at IS NULL
+            """))
+
+        telemetry_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(device_telemetry)")).fetchall()
+        }
+        if "power_w" not in telemetry_columns:
+            conn.execute(text("ALTER TABLE device_telemetry ADD COLUMN power_w VARCHAR DEFAULT '0'"))
+        if "energy_wh" not in telemetry_columns:
+            conn.execute(text("ALTER TABLE device_telemetry ADD COLUMN energy_wh VARCHAR DEFAULT '0'"))
 
 
 ensure_sqlite_schema()
@@ -169,6 +204,36 @@ def schema_updates(schema) -> dict:
     if hasattr(schema, "model_dump"):
         return schema.model_dump(exclude_unset=True)
     return schema.dict(exclude_unset=True)
+
+
+def serialize_telemetry(entry: models.DeviceTelemetry) -> dict:
+    return {
+        "id": entry.id,
+        "device_id": entry.device_id,
+        "organization_id": entry.organization_id,
+        "temperature": entry.temperature,
+        "humidity": entry.humidity,
+        "motion_detected": entry.motion_detected,
+        "power_w": entry.power_w or "0",
+        "energy_wh": entry.energy_wh or "0",
+        "created_at": entry.created_at,
+    }
+
+
+def estimated_device_watts(device: models.Device) -> float:
+    device_type = (device.device_type or "other").lower()
+    watts = ESTIMATED_DEVICE_WATTS.get(device_type, 25)
+    state = str(device.current_state or "").upper()
+    if device_type == "sensor":
+        return watts if state == "ACTIVE" else 0
+    return watts if state == "ON" else 0
+
+
+def telemetry_power_w(entry: models.DeviceTelemetry) -> float:
+    try:
+        return max(float(entry.power_w or 0), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def validate_password_strength(password: str) -> None:
@@ -311,10 +376,10 @@ def ensure_starter_home(db: Session, user: models.User) -> None:
         ))
 
     if sensor:
-        for temperature, humidity, motion in [
-            (27.4, 54.0, False),
-            (28.1, 57.5, True),
-            (27.8, 55.2, False),
+        for temperature, humidity, motion, power_w in [
+            (27.4, 54.0, False, 2.5),
+            (28.1, 57.5, True, 3.1),
+            (27.8, 55.2, False, 2.8),
         ]:
             db.add(models.DeviceTelemetry(
                 device_id=sensor.id,
@@ -322,6 +387,8 @@ def ensure_starter_home(db: Session, user: models.User) -> None:
                 temperature=str(temperature),
                 humidity=str(humidity),
                 motion_detected=motion,
+                power_w=str(power_w),
+                energy_wh="0",
             ))
 
     db.commit()
@@ -342,6 +409,11 @@ seed_empty_registered_homes()
 @app.get("/")
 def root():
     return {"message": "Home Server Secure Backend Running"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.post("/register")
@@ -369,6 +441,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
             email=email,
             hashed_password=hash_password(user.password),
             is_admin=True,
+            created_at=datetime.utcnow(),
             organization_id=org.id,
         )
         db.add(new_user)
@@ -443,6 +516,7 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
             "username": db_user.username,
             "email": db_user.email,
             "organization_id": db_user.organization_id,
+            "created_at": db_user.created_at,
         },
     }
 
@@ -584,7 +658,8 @@ def protected_route(current_user: models.User = Depends(get_current_user)):
         "message": "Access granted",
         "user": current_user.username,
         "email": current_user.email,
-        "organization_id": current_user.organization_id
+        "organization_id": current_user.organization_id,
+        "created_at": current_user.created_at,
     }
 
 
@@ -834,7 +909,9 @@ async def device_telemetry(
         organization_id=device.organization_id,
         temperature=str(telemetry.temperature),
         humidity=str(telemetry.humidity),
-        motion_detected=telemetry.motion_detected
+        motion_detected=telemetry.motion_detected,
+        power_w=str(telemetry.power_w),
+        energy_wh=str(telemetry.energy_wh),
     )
 
     device.last_seen = datetime.utcnow()
@@ -934,6 +1011,8 @@ async def device_telemetry(
             "temperature": telemetry.temperature,
             "humidity": telemetry.humidity,
             "motion_detected": telemetry.motion_detected,
+            "power_w": telemetry.power_w,
+            "energy_wh": telemetry.energy_wh,
         },
     )
     for item in triggered_rules:
@@ -952,7 +1031,9 @@ async def device_telemetry(
         "device_name": device.name,
         "temperature": telemetry.temperature,
         "humidity": telemetry.humidity,
-        "motion_detected": telemetry.motion_detected
+        "motion_detected": telemetry.motion_detected,
+        "power_w": telemetry.power_w,
+        "energy_wh": telemetry.energy_wh,
     })
 
     for item in triggered_rules:
@@ -1032,6 +1113,8 @@ async def pulse_demo_devices(
                 temperature=str(round(random.uniform(24, 32), 1)),
                 humidity=str(round(random.uniform(42, 68), 1)),
                 motion_detected=random.choice([False, False, True]),
+                power_w=str(round(random.uniform(1.5, 4.5), 1)),
+                energy_wh="0",
             ))
 
     if updated:
@@ -1243,12 +1326,25 @@ def dashboard(
     ).all()
 
     result = {}
+    room_temperatures: dict[str, list[float]] = defaultdict(list)
 
     for device in devices:
         room = device.room or "Unassigned"
 
         if room not in result:
             result[room] = []
+
+        latest_telemetry = (
+            db.query(models.DeviceTelemetry)
+            .filter(models.DeviceTelemetry.device_id == device.id)
+            .order_by(models.DeviceTelemetry.created_at.desc())
+            .first()
+        )
+        if latest_telemetry and latest_telemetry.temperature:
+            try:
+                room_temperatures[room].append(float(latest_telemetry.temperature))
+            except (TypeError, ValueError):
+                pass
 
         result[room].append({
             "device_id": device.id,
@@ -1258,7 +1354,15 @@ def dashboard(
             **device_presence(device),
         })
 
-    return result
+    enriched = {}
+    for room, room_devices in result.items():
+        temps = room_temperatures.get(room, [])
+        enriched[room] = {
+            "devices": room_devices,
+            "temperature": round(sum(temps) / len(temps), 1) if temps else None,
+        }
+
+    return enriched
 
 
 @app.post("/scenes")
@@ -1671,7 +1775,243 @@ def get_device_telemetry(
         models.DeviceTelemetry.created_at.desc()
     ).limit(limit).all()
 
-    return telemetry
+    return [serialize_telemetry(entry) for entry in telemetry]
+
+
+@app.get("/energy/summary")
+def energy_summary(
+    range: str = "today",
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    now = datetime.utcnow()
+    range_days = {"today": 1, "week": 7, "month": 30, "year": 365}.get(range, 1)
+    since = now - timedelta(days=range_days)
+
+    devices = db.query(models.Device).filter(
+        models.Device.organization_id == current_user.organization_id
+    ).all()
+    device_ids = [device.id for device in devices]
+
+    telemetry_rows = []
+    if device_ids:
+        telemetry_rows = (
+            db.query(models.DeviceTelemetry)
+            .filter(
+                models.DeviceTelemetry.device_id.in_(device_ids),
+                models.DeviceTelemetry.created_at >= since,
+            )
+            .order_by(models.DeviceTelemetry.created_at.asc())
+            .all()
+        )
+
+    timeline_buckets: dict[datetime, list[float]] = defaultdict(list)
+
+    def bucket_key(created_at: datetime) -> datetime:
+        if range == "today":
+            return created_at.replace(minute=0, second=0, microsecond=0)
+        if range == "week":
+            hour = (created_at.hour // 6) * 6
+            return created_at.replace(hour=hour, minute=0, second=0, microsecond=0)
+        return created_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    total_energy_kwh = 0.0
+    has_hardware_power = False
+
+    for index, entry in enumerate(telemetry_rows):
+        power = telemetry_power_w(entry)
+        if power > 0:
+            has_hardware_power = True
+        elif index > 0:
+            prev = telemetry_rows[index - 1]
+            if entry.device_id == prev.device_id:
+                delta_hours = max(
+                    (entry.created_at - prev.created_at).total_seconds() / 3600,
+                    1 / 120,
+                )
+                device = next((item for item in devices if item.id == entry.device_id), None)
+                if device:
+                    power = estimated_device_watts(device)
+
+        if power > 0 and index > 0:
+            prev = telemetry_rows[index - 1]
+            if entry.device_id == prev.device_id:
+                delta_hours = max(
+                    (entry.created_at - prev.created_at).total_seconds() / 3600,
+                    1 / 120,
+                )
+                total_energy_kwh += (power / 1000) * delta_hours
+
+        timeline_buckets[bucket_key(entry.created_at)].append(power)
+
+    timeline = [
+        {
+            "time": bucket.isoformat(),
+            "label": bucket.strftime("%H:%M" if range == "today" else "%d %b"),
+            "kwh": round(sum(values) / max(len(values), 1) / 1000, 2),
+            "power_w": round(sum(values) / max(len(values), 1), 1),
+        }
+        for bucket, values in sorted(timeline_buckets.items())
+    ]
+
+    if not timeline and devices:
+        for device in devices:
+            watts = estimated_device_watts(device)
+            if watts <= 0:
+                continue
+            timeline.append(
+                {
+                    "time": now.isoformat(),
+                    "label": device.name,
+                    "kwh": round(watts / 1000, 2),
+                    "power_w": round(watts, 1),
+                }
+            )
+            total_energy_kwh += (watts / 1000) * (range_days * 2)
+
+    latest_powers = []
+    for device in devices:
+        latest = (
+            db.query(models.DeviceTelemetry)
+            .filter(models.DeviceTelemetry.device_id == device.id)
+            .order_by(models.DeviceTelemetry.created_at.desc())
+            .first()
+        )
+        power = telemetry_power_w(latest) if latest else 0
+        if power <= 0:
+            power = estimated_device_watts(device)
+        latest_powers.append(power)
+
+    current_kw = round(sum(latest_powers) / 1000, 2) if latest_powers else 0
+    if total_energy_kwh <= 0 and current_kw > 0:
+        total_energy_kwh = current_kw * max(range_days * 4, 1)
+
+    daily_average = round(total_energy_kwh / max(range_days, 1), 1)
+    month_total = round(daily_average * 30, 1) if range != "year" else round(total_energy_kwh, 1)
+
+    breakdown_totals: dict[str, float] = defaultdict(float)
+    for device in devices:
+        latest = (
+            db.query(models.DeviceTelemetry)
+            .filter(models.DeviceTelemetry.device_id == device.id)
+            .order_by(models.DeviceTelemetry.created_at.desc())
+            .first()
+        )
+        power = telemetry_power_w(latest) if latest else 0
+        if power <= 0:
+            power = estimated_device_watts(device)
+        label = (device.device_type or "other").title()
+        breakdown_totals[label] += power
+
+    total_breakdown = sum(breakdown_totals.values()) or 1
+    usage_breakdown = [
+        {
+            "label": label,
+            "percent": round((value / total_breakdown) * 100),
+            "power_w": round(value, 1),
+        }
+        for label, value in sorted(breakdown_totals.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+    return {
+        "range": range,
+        "has_hardware_power": has_hardware_power,
+        "current_kw": current_kw,
+        "daily_average_kwh": daily_average,
+        "month_total_kwh": month_total,
+        "estimated_bill": round(month_total * ENERGY_RATE_PER_KWH, 0),
+        "timeline": timeline,
+        "usage_breakdown": usage_breakdown,
+        "reading_count": len(telemetry_rows),
+    }
+
+
+@app.get("/rooms")
+def list_rooms(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rooms = db.query(models.Room).filter(
+        models.Room.organization_id == current_user.organization_id
+    ).order_by(models.Room.name.asc()).all()
+    return [
+        {
+            "room_id": room.id,
+            "name": room.name,
+            "created_at": room.created_at,
+        }
+        for room in rooms
+    ]
+
+
+@app.post("/rooms")
+async def create_room(
+    room: RoomCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    name = room.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Room name is required")
+
+    existing = db.query(models.Room).filter(
+        models.Room.organization_id == current_user.organization_id,
+        models.Room.name == name,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Room already exists")
+
+    new_room = models.Room(name=name, organization_id=current_user.organization_id)
+    db.add(new_room)
+    record_event(
+        db,
+        "room_created",
+        current_user.organization_id,
+        f"{name} room created",
+        {"room_name": name},
+    )
+    db.commit()
+    db.refresh(new_room)
+
+    await manager.broadcast({
+        "event": "room_created",
+        "room_id": new_room.id,
+        "room_name": new_room.name,
+    })
+
+    return {"room_id": new_room.id, "name": new_room.name}
+
+
+@app.delete("/rooms/{room_id}")
+async def delete_room(
+    room_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    room = db.query(models.Room).filter(
+        models.Room.id == room_id,
+        models.Room.organization_id == current_user.organization_id,
+    ).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    room_name = room.name
+    db.delete(room)
+    record_event(
+        db,
+        "room_deleted",
+        current_user.organization_id,
+        f"{room_name} room deleted",
+        {"room_id": room_id, "room_name": room_name},
+    )
+    db.commit()
+
+    await manager.broadcast({
+        "event": "room_deleted",
+        "room_id": room_id,
+        "room_name": room_name,
+    })
+
+    return {"message": "Room deleted"}
 
 
 @app.get("/devices/{device_id}/commands")

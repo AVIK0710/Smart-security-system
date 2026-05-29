@@ -30,7 +30,9 @@ def send_telemetry():
         "device_token": "8421586460d114efb10bb22ae664731836a43e0b2eca47ac16d371f656f9df0f",
         "temperature": round(random.uniform(24, 35), 2),
         "humidity": round(random.uniform(45, 75), 2),
-        "motion_detected": random.choice([True, False, False])
+        "motion_detected": random.choice([True, False, False]),
+        "power_w": round(random.uniform(2, 45), 2),
+        "energy_wh": round(random.uniform(0, 500), 2),
     }
 
     response = requests.post(f"{API_BASE}/devices/telemetry", json=payload)

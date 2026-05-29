@@ -11,6 +11,7 @@ export default function Topbar() {
     listening,
     refreshAll,
     startVoice,
+    switchView,
     logout,
     goToLogin,
     goToRegister,
@@ -32,6 +33,11 @@ export default function Topbar() {
     .map((part) => part[0])
     .join("")
     .toUpperCase() || "U";
+  const openNotifications = () => {
+    localStorage.setItem("smart_home_settings_active_tab", "notifications");
+    window.dispatchEvent(new CustomEvent("smart-home-settings-tab", { detail: { tab: "notifications" } }));
+    switchView("settings");
+  };
 
   return (
     <header className="topbar">
@@ -57,7 +63,7 @@ export default function Topbar() {
             <button className={`round-btn${listening ? " active" : ""}`} type="button" title="Voice command" onClick={startVoice}>
               <LucideIcon name="Mic" />
             </button>
-            <button className="notification-btn" type="button" title="Notifications">
+            <button className="notification-btn" type="button" title="Notifications" onClick={openNotifications}>
               <LucideIcon name="Bell" />
             </button>
             <button className="account-chip" type="button" title={displayEmail} onClick={goToLogin}>

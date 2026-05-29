@@ -70,7 +70,9 @@ def send_sensor_telemetry():
         "device_token": sensor["token"],
         "temperature": temperature,
         "humidity": humidity,
-        "motion_detected": motion_detected
+        "motion_detected": motion_detected,
+        "power_w": round(random.uniform(2, 8), 2),
+        "energy_wh": 0,
     }
 
     response = post("/devices/telemetry", payload)

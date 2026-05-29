@@ -145,7 +145,7 @@ export const VIEW_TITLES = {
   schedules: ["Schedules", "Create scenes for repeatable routines."],
   automation: ["Automation", "Create and manage smart automations."],
   settings: ["Settings", "Manage your smart home preferences and system."],
-  access: ["Access", "Authenticate with the backend before controlling devices."],
+  access: ["Account", "Manage your account and preferences."],
 };
 
 export const NAV_ITEMS = [

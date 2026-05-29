@@ -1,19 +1,41 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "../context/AppContext.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
+import { readImageAsDataUrl } from "../utils/helpers.js";
+
+const PROFILE_PHOTO_KEY = "smart_home_profile_photo";
+
+function profilePhotoKey(username) {
+  return `${PROFILE_PHOTO_KEY}_${username || "guest"}`;
+}
+
+function formatMemberSince(value) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not available";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
 
 export default function AccessView() {
   const {
     token,
+    currentUser,
+    metrics,
+    devices,
+    events,
     authTab,
     setAuthTab,
+    switchView,
     login,
     register,
     requestPasswordReset,
     verifyPasswordOtp,
     resetPassword,
     logout,
-    switchView,
     toast,
   } = useApp();
   const [loginUsername, setLoginUsername] = useState("");
@@ -27,6 +49,86 @@ export default function AccessView() {
   const [resetPasswordValue, setResetPasswordValue] = useState("");
   const [resetConfirmPassword, setResetConfirmPassword] = useState("");
   const [resetStep, setResetStep] = useState("email");
+  const [accountPanel, setAccountPanel] = useState("profile");
+  const [profilePhoto, setProfilePhoto] = useState("");
+  const fileInputRef = useRef(null);
+  const displayName = currentUser?.username || "Krishna";
+  const displayEmail = currentUser?.email || "krishna.home@gmail.com";
+  const memberSince = formatMemberSince(currentUser?.createdAt);
+  const initials = displayName
+    .split(/\s|_/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "K";
+  const accountRows = [
+    ["profile", "UserRound", "Personal Information", "Update your personal details"],
+    ["devices", "Monitor", "Connected Devices", `${metrics.total} connected device${metrics.total === 1 ? "" : "s"}`],
+    ["security", "ShieldCheck", "Account Security", "Password and recovery settings"],
+    ["free", "ReceiptText", "Free Access", "No subscriptions or invoices"],
+  ];
+  const panelTitle = {
+    profile: "Account Information",
+    security: "Account Security",
+    free: "Free Access",
+  }[accountPanel] || "Account Information";
+  const accountDetails = accountPanel === "security"
+    ? [
+        ["Login Email", displayEmail],
+        ["Password", "Protected"],
+        ["Recovery", "OTP password reset available"],
+        ["Session", token ? "Signed in" : "Signed out"],
+        ["Security Alerts", metrics.alerts ? `${metrics.alerts} active` : "No active alerts"],
+      ]
+    : accountPanel === "free"
+    ? [
+        ["Plan", "Free for everyone"],
+        ["Devices", "Unlimited within your home server"],
+        ["Billing", "No billing required"],
+        ["Invoices", "None"],
+        ["Access", "All dashboard features included"],
+      ]
+    : [
+        ["Full Name", displayName],
+        ["Email", displayEmail],
+        ["Member Since", memberSince],
+        ["Role", "Home Owner"],
+        ["Connected Devices", `${devices.length} device${devices.length === 1 ? "" : "s"}`],
+      ];
+
+  useEffect(() => {
+    setProfilePhoto(localStorage.getItem(profilePhotoKey(displayName)) || "");
+  }, [displayName]);
+
+  const handleProfilePhotoChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await readImageAsDataUrl(file);
+    if (!dataUrl) {
+      toast("Could not read that image");
+      return;
+    }
+    localStorage.setItem(profilePhotoKey(displayName), dataUrl);
+    setProfilePhoto(dataUrl);
+    toast("Profile photo updated");
+    event.target.value = "";
+  };
+
+  const handleAccountRow = (panel) => {
+    if (panel === "devices") {
+      switchView("devices");
+      return;
+    }
+    setAccountPanel(panel);
+  };
+
+  const openPasswordReset = () => {
+    setResetEmail(displayEmail);
+    setResetStep("email");
+    setAuthTab("forgot");
+    toast("Password reset is available from the account sign-in screen.");
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -92,34 +194,95 @@ export default function AccessView() {
 
   if (token) {
     return (
-      <section className="view active">
-        <div className="auth-layout">
-          <section className="panel pad">
-            <div className="section-head">
-              <div>
-                <h3>Account</h3>
-                <span>You are signed in and can control your smart home.</span>
+      <section className="view active account-page">
+        <div className="account-layout">
+          <section className="account-profile-card">
+            <h3>Profile</h3>
+            <div className="account-profile-hero">
+              <div className="account-avatar-large">
+                <span>
+                  {profilePhoto ? <img src={profilePhoto} alt="" /> : initials}
+                </span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleProfilePhotoChange}
+                />
+                <button
+                  type="button"
+                  aria-label="Update profile photo"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <LucideIcon name="Camera" />
+                </button>
+              </div>
+              <div className="account-profile-copy">
+                <h4>{displayName}</h4>
+                <strong>Free Home Owner</strong>
+                <span>{displayEmail}</span>
+                <span>Member since {memberSince}</span>
               </div>
             </div>
-            <div className="safe-card" style={{ marginBottom: 20 }}>
-              <LucideIcon name="CircleUserRound" size={58} />
-              <div>
-                <strong>Signed in</strong>
-                <p>Your session is active. Use the dashboard to manage devices.</p>
-              </div>
+
+            <div className="account-menu-list">
+              {accountRows.map(([panel, icon, label, text]) => (
+                <button
+                  type="button"
+                  key={label}
+                  className={`account-menu-row${accountPanel === panel ? " active" : ""}`}
+                  onClick={() => handleAccountRow(panel)}
+                >
+                  <span className="account-menu-icon">
+                    <LucideIcon name={icon} />
+                  </span>
+                  <span>
+                    <strong>{label}</strong>
+                    <small>{text}</small>
+                  </span>
+                  <LucideIcon name="ChevronDown" />
+                </button>
+              ))}
             </div>
-            <div className="actions">
-              <button className="btn" type="button" onClick={() => switchView("overview")}>
-                <LucideIcon name="House" />
-                <span>Go to Dashboard</span>
-              </button>
-              <button className="btn danger" type="button" onClick={logout}>
+          </section>
+
+          <section className="account-info-card">
+            <h3>{panelTitle}</h3>
+            <div className="account-info-list">
+              {accountDetails.map(([label, value]) => (
+                <article className="account-info-row" key={label}>
+                  <strong>{label}</strong>
+                  <span>{value}</span>
+                </article>
+              ))}
+            </div>
+            {accountPanel === "security" ? (
+              <div className="account-panel-copy">
+                <p>Use password reset to send an OTP to your email and set a new password.</p>
+                <button className="btn secondary" type="button" onClick={openPasswordReset}>
+                  <LucideIcon name="ShieldCheck" />
+                  <span>Reset Password</span>
+                </button>
+              </div>
+            ) : null}
+            {accountPanel === "free" ? (
+              <div className="account-panel-copy">
+                <p>This dashboard has no paid subscription, invoice, or billing flow. Every account can use the full website.</p>
+              </div>
+            ) : null}
+            {accountPanel === "profile" ? (
+              <div className="account-panel-copy">
+                <p>{events.length} recent activity event{events.length === 1 ? "" : "s"} are saved for this account.</p>
+              </div>
+            ) : null}
+            <div className="account-info-actions">
+              <button className="account-signout-btn" type="button" onClick={logout}>
                 <LucideIcon name="LogOut" />
-                <span>Sign out</span>
+                <span>Sign Out</span>
               </button>
             </div>
           </section>
-          <div className="auth-visual" aria-hidden="true" />
         </div>
       </section>
     );

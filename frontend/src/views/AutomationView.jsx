@@ -61,7 +61,7 @@ const INTEGRATIONS = [
 ];
 
 function deviceLabel(devices, id) {
-  const device = devices.find((item) => item.device_id === id);
+  const device = devices.find((item) => Number(item.device_id) === Number(id));
   return device?.device_name || `Device #${id}`;
 }
 
@@ -123,6 +123,7 @@ export default function AutomationView() {
 
   const sensorId = ruleSensor || (devices[0] ? String(devices[0].device_id) : "");
   const actionId = actionDevice || (devices[0] ? String(devices[0].device_id) : "");
+  const usingSampleRules = !rules.length;
   const ruleRows = useMemo(
     () => (rules.length ? rules.map((rule) => ruleViewModel(rule, devices)) : DEMO_RULES),
     [rules, devices],
@@ -322,9 +323,16 @@ export default function AutomationView() {
 
         {tab === "rules" && (
           <section className="automation-list-panel">
+            {usingSampleRules ? (
+              <p className="sample-data-banner">Sample rules shown — create a real rule below to replace these.</p>
+            ) : null}
             <div className="automation-list">
               {!filteredRules.length ? (
-                <div className="empty">No automation rules match your search</div>
+                <div className="empty">
+                  {rules.length
+                    ? "No automation rules match your search"
+                    : "Create your first automation rule to react to sensor telemetry from hardware."}
+                </div>
               ) : (
                 filteredRules.map((item) => (
                   <article className={`automation-row ${item.is_active ? "is-running" : "is-paused"}`} key={item.id}>
