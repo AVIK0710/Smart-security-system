@@ -19,6 +19,12 @@ export default function Topbar() {
   const [title, subtitle] = VIEW_TITLES[currentView] || VIEW_TITLES.overview;
   const displayName = currentUser?.username || "Account";
   const displayEmail = currentUser?.email || "Signed in";
+  const pageTitle =
+    currentView === "overview" && token ? `Welcome back, ${displayName}` : title;
+  const pageSubtitle =
+    currentView === "overview" && token
+      ? "Here's what's happening in your smart home today."
+      : subtitle;
   const initials = displayName
     .split(/\s|_/)
     .filter(Boolean)
@@ -30,8 +36,8 @@ export default function Topbar() {
   return (
     <header className="topbar">
       <div className="page-title">
-        <h2>{title}</h2>
-        <p>{subtitle}</p>
+        <h2>{pageTitle}</h2>
+        <p>{pageSubtitle}</p>
       </div>
       <div className="toolbar">
         <div className="top-status">{metrics.homeStatusText}</div>
@@ -54,13 +60,14 @@ export default function Topbar() {
             <button className="notification-btn" type="button" title="Notifications">
               <LucideIcon name="Bell" />
             </button>
-            <div className="account-chip" title={displayEmail}>
+            <button className="account-chip" type="button" title={displayEmail} onClick={goToLogin}>
               <div className="avatar" aria-hidden="true">{initials}</div>
               <div className="account-copy">
                 <strong>{displayName}</strong>
                 <span>{displayEmail}</span>
               </div>
-            </div>
+              <LucideIcon name="ChevronDown" size={16} />
+            </button>
             <button
               className="btn secondary hidden"
               id="refreshBtn"
@@ -71,9 +78,8 @@ export default function Topbar() {
               <LucideIcon name="RefreshCw" />
               <span>Refresh</span>
             </button>
-            <button className="btn danger" id="logoutBtn" type="button" title="Sign out" onClick={logout}>
+            <button className="round-btn signout-btn" id="logoutBtn" type="button" title="Sign out" onClick={logout}>
               <LucideIcon name="LogOut" />
-              <span>Sign out</span>
             </button>
           </>
         )}

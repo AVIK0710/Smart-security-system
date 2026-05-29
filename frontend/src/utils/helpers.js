@@ -13,11 +13,14 @@ export function formatTime(value) {
 
 export function roomImage(room) {
   const value = normalizeText(room);
-  if (value.includes("bed")) return "https://img.icons8.com/clouds/200/bedroom.png";
-  if (value.includes("kitchen")) return "https://img.icons8.com/clouds/200/kitchen-room.png";
-  if (value.includes("bath")) return "https://img.icons8.com/clouds/200/bath.png";
-  if (value.includes("balcony")) return "https://img.icons8.com/clouds/200/garden.png";
-  return "https://img.icons8.com/clouds/200/living-room.png";
+  if (value.includes("bed")) return "https://images.unsplash.com/photo-1616594039964-ae9021a400a0?auto=format&fit=crop&w=700&q=80";
+  if (value.includes("kitchen")) return "https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=700&q=80";
+  if (value.includes("bath")) return "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=700&q=80";
+  if (value.includes("balcony")) return "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=700&q=80";
+  if (value.includes("dining")) return "https://images.unsplash.com/photo-1617806118233-18e1de247200?auto=format&fit=crop&w=700&q=80";
+  if (value.includes("study")) return "https://images.unsplash.com/photo-1593476550610-87baa860004a?auto=format&fit=crop&w=700&q=80";
+  if (value.includes("entrance") || value.includes("entry")) return "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=700&q=80";
+  return "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=700&q=80";
 }
 
 export function roomIcon(room) {
@@ -26,6 +29,9 @@ export function roomIcon(room) {
   if (value.includes("kitchen")) return "CookingPot";
   if (value.includes("bath")) return "Bath";
   if (value.includes("entrance") || value.includes("entry")) return "DoorOpen";
+  if (value.includes("study") || value.includes("office")) return "Monitor";
+  if (value.includes("dining")) return "Utensils";
+  if (value.includes("balcony")) return "Landmark";
   return "Sofa";
 }
 
@@ -137,7 +143,8 @@ export const VIEW_TITLES = {
   energy: ["Energy", "Track usage and reduce wasted power."],
   security: ["Security", "Monitor safety, motion, and home protection."],
   schedules: ["Schedules", "Create scenes for repeatable routines."],
-  settings: ["Settings", "Manage rules and live feed."],
+  automation: ["Automation", "Create and manage smart automations."],
+  settings: ["Settings", "Manage your smart home preferences and system."],
   access: ["Access", "Authenticate with the backend before controlling devices."],
 };
 
@@ -148,6 +155,7 @@ export const NAV_ITEMS = [
   { id: "energy", label: "Energy", icon: "Zap" },
   { id: "security", label: "Security", icon: "ShieldCheck" },
   { id: "schedules", label: "Schedules", icon: "CalendarDays" },
+  { id: "automation", label: "Automation", icon: "Sun" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 

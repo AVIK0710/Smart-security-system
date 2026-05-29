@@ -28,6 +28,7 @@ const STATUS_ICONS = {
 export default function Sidebar() {
   const {
     token,
+    currentUser,
     currentView,
     switchView,
     goToLogin,
@@ -41,6 +42,8 @@ export default function Sidebar() {
   const backend = STATUS_ICONS.backend[backendStatus] || STATUS_ICONS.backend.checking;
   const socket = STATUS_ICONS.socket[socketStatus] || STATUS_ICONS.socket.offline;
   const voice = STATUS_ICONS.voice[voiceStatus] || STATUS_ICONS.voice.idle;
+  const displayName = currentUser?.username || "krishna";
+  const initial = displayName[0]?.toUpperCase() || "K";
 
   return (
     <aside className="sidebar">
@@ -79,33 +82,52 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <div className="sidebar-card">
+        <button
+          type="button"
+          className="sidebar-profile"
+          onClick={goToLogin}
+          title={token ? "Account settings" : "Login or register"}
+        >
+          <span className="sidebar-avatar">{initial}</span>
+          <span>
+            <strong>{displayName}</strong>
+            <small>{token ? "Premium Plan" : "Sign in"}</small>
+          </span>
+          <LucideIcon name="ChevronDown" />
+        </button>
+        <div className="sidebar-health">
+          <span className="green-dot" />
+          <strong>{backend[1]}</strong>
+          <small>All systems operational</small>
+        </div>
+        <div className="sidebar-greeting">
           <LucideIcon name="Sun" />
           <strong>Good Morning!</strong>
           <span>Everything looks good. Have a nice day!</span>
         </div>
-        <div className="help-card">
-          <LucideIcon name="CircleHelp" />
-          <span>Help</span>
+        <div className="sidebar-mode">
+          <LucideIcon name="Sun" />
+          <span />
+          <LucideIcon name="Moon" />
         </div>
         <button
           type="button"
-          className="connection-pill auth-pill"
+          className="connection-pill auth-pill hidden"
           onClick={goToLogin}
           title={token ? "Account settings" : "Login or register"}
         >
           <LucideIcon name={auth[0]} />
           <span>{auth[1]}</span>
         </button>
-        <div className="connection-pill">
+        <div className="connection-pill hidden">
           <LucideIcon name={backend[0]} />
           <span>{backend[1]}</span>
         </div>
-        <div className="connection-pill">
+        <div className="connection-pill hidden">
           <LucideIcon name={socket[0]} />
           <span>{socket[1]}</span>
         </div>
-        <div className="connection-pill">
+        <div className="connection-pill hidden">
           <LucideIcon name={voice[0]} />
           <span>{voice[1]}</span>
         </div>

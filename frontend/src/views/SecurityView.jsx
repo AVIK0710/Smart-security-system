@@ -1,158 +1,300 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
-import { PERSON_ROLES, readImageAsDataUrl } from "../utils/helpers.js";
+import { deviceIcon, normalizeText } from "../utils/helpers.js";
+
+const DEMO_ALERTS = [
+  { id: "motion", icon: "Radar", tone: "purple", title: "Entry Motion Sensor", place: "Living Room", time: "2 minutes ago" },
+  { id: "door-lock", icon: "Lock", tone: "green", title: "Front Door locked", place: "Main Entrance", time: "15 minutes ago" },
+  { id: "window", icon: "PanelTop", tone: "amber", title: "Window opened - Living Room", place: "Living Room", time: "1 hour ago" },
+  { id: "smoke", icon: "Zap", tone: "red", title: "Smoke detected", place: "Kitchen", time: "2 hours ago" },
+];
+
+const DEMO_SENSORS = [
+  { icon: "Radar", tone: "purple", name: "Entry Motion Sensor", room: "Living Room", status: "ACTIVE", statusTone: "green" },
+  { icon: "PanelTop", tone: "slate", name: "Window Sensor", room: "Bedroom", status: "CLOSED", statusTone: "blue" },
+  { icon: "DoorOpen", tone: "blue", name: "Door Sensor", room: "Front Door", status: "CLOSED", statusTone: "blue" },
+  { icon: "Zap", tone: "amber", name: "Smoke Sensor", room: "Kitchen", status: "NORMAL", statusTone: "green" },
+];
+
+const CAMERA_FEEDS = [
+  {
+    id: "living",
+    name: "Living Room",
+    src: "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    id: "entrance",
+    name: "Main Entrance",
+    src: "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    id: "garage",
+    name: "Garage",
+    src: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&w=1200&q=80",
+  },
+];
+
+function isSecurityDevice(device) {
+  const value = normalizeText(`${device.device_name} ${device.device_type}`);
+  return (
+    value.includes("sensor") ||
+    value.includes("motion") ||
+    value.includes("camera") ||
+    value.includes("lock") ||
+    value.includes("door") ||
+    value.includes("window") ||
+    value.includes("smoke")
+  );
+}
+
+function statusLabel(device) {
+  const value = normalizeText(`${device.device_name} ${device.device_type}`);
+  const state = String(device.state || "").toUpperCase();
+  if (value.includes("lock")) return state === "OFF" ? "UNLOCKED" : "LOCKED";
+  if (value.includes("camera")) return device.is_online ? "LIVE" : "OFFLINE";
+  if (state === "ACTIVE") return "ACTIVE";
+  if (value.includes("smoke")) return "NORMAL";
+  return device.is_online ? "ACTIVE" : "CLOSED";
+}
 
 export default function SecurityView() {
-  const { knownPeople, addKnownPerson, removeKnownPerson, motionEvents } = useApp();
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("Owner");
-  const [access, setAccess] = useState("");
-  const [imageFile, setImageFile] = useState(null);
+  const { devices, metrics, motionEvents } = useApp();
+  const [securityMode, setSecurityMode] = useState("home");
+  const [selectedCameraId, setSelectedCameraId] = useState(CAMERA_FEEDS[0].id);
+  const [cameraMuted, setCameraMuted] = useState(true);
+  const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const [sensorFilter, setSensorFilter] = useState("all");
+  const [sensorSearch, setSensorSearch] = useState("");
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState(() => new Set());
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const image = await readImageAsDataUrl(imageFile);
-    addKnownPerson({
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      name: name.trim(),
-      role,
-      access: access.trim(),
-      image,
-      created_at: new Date().toISOString(),
+  const securityDevices = useMemo(() => {
+    const matched = devices.filter(isSecurityDevice);
+    if (!matched.length) return [];
+    return matched.map((device) => ({
+      id: device.device_id,
+      icon: deviceIcon(device),
+      tone: normalizeText(device.device_type).includes("lock") ? "green" : "blue",
+      name: device.device_name,
+      room: device.room || "Unassigned",
+      status: statusLabel(device),
+      statusTone: device.is_online ? "green" : "blue",
+    }));
+  }, [devices]);
+
+  const visibleSensors = securityDevices.length ? securityDevices : DEMO_SENSORS;
+  const systemHealth = metrics.total ? Math.round((metrics.online / metrics.total) * 100) : 100;
+  const alerts = motionEvents.length
+    ? motionEvents.slice(0, 4).map((item, index) => ({
+        icon: "Radar",
+        tone: "purple",
+        title: "Motion detected",
+        place: `Device #${item.device_id}`,
+        time: new Date(item.created_at).toLocaleTimeString(),
+        id: `${item.device_id}-${index}`,
+      }))
+    : DEMO_ALERTS;
+  const openAlerts = alerts.filter((alert) => !acknowledgedAlerts.has(alert.id || alert.title));
+  const visibleAlerts = showAllAlerts ? alerts : openAlerts.slice(0, 4);
+  const selectedCamera = CAMERA_FEEDS.find((camera) => camera.id === selectedCameraId) || CAMERA_FEEDS[0];
+  const filteredSensors = visibleSensors.filter((sensor) => {
+    const matchesStatus =
+      sensorFilter === "all" ||
+      (sensorFilter === "active" && ["ACTIVE", "LIVE"].includes(sensor.status)) ||
+      (sensorFilter === "closed" && ["CLOSED", "LOCKED", "NORMAL"].includes(sensor.status));
+    const matchesSearch = !sensorSearch || normalizeText(`${sensor.name} ${sensor.room} ${sensor.status}`).includes(normalizeText(sensorSearch));
+    return matchesStatus && matchesSearch;
+  });
+  const modeCopy = {
+    home: "Home mode keeps interior sensors calm while monitoring doors, windows, and cameras.",
+    away: "Away mode watches all sensors and highlights motion immediately.",
+    night: "Night mode prioritizes entry points and quiet alerts.",
+  };
+
+  const acknowledgeAlert = (alert) => {
+    const alertId = alert.id || alert.title;
+    setAcknowledgedAlerts((prev) => {
+      const next = new Set(prev);
+      next.add(alertId);
+      return next;
     });
-    setName("");
-    setAccess("");
-    setRole("Owner");
-    setImageFile(null);
-    e.target.reset();
   };
 
   return (
-    <section className="view active">
-      <div className="grid two">
-        <section className="panel pad">
-          <div className="section-head">
-            <div>
-              <h3>Security</h3>
-              <span>Live safety and motion status</span>
-            </div>
-          </div>
-          <div className="safe-card">
-            <LucideIcon name="ShieldCheck" size={58} />
-            <div>
-              <strong>Protected</strong>
-              <p>Motion events, rules, and device status are monitored.</p>
-            </div>
-          </div>
-        </section>
+    <section className="view active security-reference-page">
+      <div className="security-console-strip">
+        <div>
+          <span className="security-live-dot" />
+          <strong>{metrics.offline === 0 ? "All systems online" : `${metrics.offline} device${metrics.offline === 1 ? "" : "s"} need attention`}</strong>
+          <small>Last sync just now</small>
+        </div>
+        <div className="security-mode-tabs" aria-label="Security mode">
+          {["home", "away", "night"].map((mode) => (
+            <button
+              className={securityMode === mode ? "active" : ""}
+              type="button"
+              key={mode}
+              onClick={() => setSecurityMode(mode)}
+            >
+              {mode.charAt(0).toUpperCase() + mode.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
 
-        <section className="panel pad">
-          <div className="section-head">
-            <div>
-              <h3>Known Faces & Owners</h3>
-              <span>Add trusted people for security records</span>
+      <div className="security-reference-grid">
+        <div className="security-left-column">
+          <section className="security-card security-status-card">
+            <h3>Security Status</h3>
+            <div className="security-status-main">
+              <div className="security-status-icon">
+                <LucideIcon name="ShieldCheck" />
+              </div>
+              <div>
+                <strong>Your home is secure</strong>
+                <span>{modeCopy[securityMode]}</span>
+              </div>
             </div>
-          </div>
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <div className="field">
-              <label htmlFor="personName">Name</label>
-              <input
-                id="personName"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
+            <div className="security-status-metrics">
+              <div>
+                <strong>24/7</strong>
+                <span>Monitoring</span>
+              </div>
+              <div>
+                <strong>{visibleSensors.length}</strong>
+                <span>Active Sensors</span>
+              </div>
+              <div>
+                <strong>{systemHealth}%</strong>
+                <span>System Health</span>
+              </div>
             </div>
-            <div className="field">
-              <label htmlFor="personRole">Access Type</label>
-              <select id="personRole" value={role} onChange={(e) => setRole(e.target.value)}>
-                {PERSON_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="personAccess">Access Area</label>
-              <input
-                id="personAccess"
-                value={access}
-                onChange={(e) => setAccess(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="personImage">Face Image</label>
-              <input
-                id="personImage"
-                type="file"
-                accept="image/*"
-                onChange={(e) => setImageFile(e.target.files[0] || null)}
-              />
-            </div>
-            <div className="field full">
-              <button className="btn" type="submit">
-                <LucideIcon name="UserRoundPlus" />
-                <span>Add Person</span>
+          </section>
+
+          <section className="security-card security-alerts-card">
+            <div className="security-card-head">
+              <div>
+                <h3>Recent Alerts</h3>
+                <span>{openAlerts.length} open alert{openAlerts.length === 1 ? "" : "s"}</span>
+              </div>
+              <button type="button" onClick={() => setShowAllAlerts((value) => !value)}>
+                {showAllAlerts ? "Show open" : "View all alerts"}
               </button>
             </div>
-          </form>
-          <div className="known-grid">
-            {!knownPeople.length ? (
-              <div className="empty">
-                Add owners, family members, guests, or blocked faces
-              </div>
-            ) : (
-              knownPeople.map((person) => (
-                <article key={person.id} className="known-card">
-                  <div className="known-avatar">
-                    {person.image ? (
-                      <img alt={person.name} src={person.image} />
-                    ) : (
-                      <LucideIcon name="UserRound" />
-                    )}
+            <div className="security-alert-list">
+              {visibleAlerts.length ? visibleAlerts.map((alert) => (
+                <article className={acknowledgedAlerts.has(alert.id || alert.title) ? "acknowledged" : ""} key={alert.id || alert.title}>
+                  <div className={`security-row-icon ${alert.tone}`}>
+                    <LucideIcon name={alert.icon} />
                   </div>
                   <div>
-                    <h4>{person.name}</h4>
-                    <span>
-                      {person.role} - {person.access || "Whole home"}
-                    </span>
+                    <strong>{alert.title}</strong>
+                    <span>{alert.place}</span>
                   </div>
-                  <button
-                    className="btn secondary icon"
-                    type="button"
-                    title="Remove"
-                    onClick={() => removeKnownPerson(person.id)}
-                  >
-                    <LucideIcon name="Trash2" />
-                  </button>
+                  <div className="security-alert-actions">
+                    <time>{alert.time}</time>
+                    {!acknowledgedAlerts.has(alert.id || alert.title) ? (
+                      <button type="button" onClick={() => acknowledgeAlert(alert)}>Acknowledge</button>
+                    ) : (
+                      <small>Resolved</small>
+                    )}
+                  </div>
                 </article>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="panel pad">
-          <div className="section-head">
-            <div>
-              <h3>Motion Timeline</h3>
-              <span>Detected from telemetry events</span>
-            </div>
-          </div>
-          <div className="event-log">
-            {!motionEvents.length ? (
-              <div className="empty">No motion events for selected device</div>
-            ) : (
-              motionEvents.map((item, i) => (
-                <div key={i} className="event-item">
-                  <strong>{new Date(item.created_at).toLocaleString()}</strong>
-                  <code>Motion detected by device #{item.device_id}</code>
+              )) : (
+                <div className="security-clear-state">
+                  <LucideIcon name="ShieldCheck" />
+                  <strong>No open alerts</strong>
+                  <span>Everything has been acknowledged.</span>
                 </div>
-              ))
-            )}
-          </div>
-        </section>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="security-right-column">
+          <section className="security-card security-camera-card">
+            <div className="security-card-head">
+              <div>
+                <h3>Live Camera</h3>
+                <span>{selectedCamera.name}</span>
+              </div>
+              <button type="button">View all cameras</button>
+            </div>
+            <div className="security-camera-frame">
+              <img
+                src={selectedCamera.src}
+                alt=""
+              />
+              <span className="security-live-badge">LIVE</span>
+              <div className="security-camera-actions">
+                <button type="button" title="Snapshot"><LucideIcon name="Cctv" /></button>
+                <button type="button" title={cameraMuted ? "Unmute audio" : "Mute audio"} onClick={() => setCameraMuted((value) => !value)}>
+                  <LucideIcon name={cameraMuted ? "MicOff" : "Mic"} />
+                </button>
+                <button type="button" title="Fullscreen"><LucideIcon name="Square" /></button>
+              </div>
+            </div>
+            <div className="security-camera-picker" aria-label="Camera feeds">
+              {CAMERA_FEEDS.map((camera) => (
+                <button
+                  className={camera.id === selectedCameraId ? "active" : ""}
+                  type="button"
+                  key={camera.id}
+                  onClick={() => setSelectedCameraId(camera.id)}
+                >
+                  {camera.name}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="security-card security-sensors-card">
+            <div className="security-card-head">
+              <div>
+                <h3>Security Sensors</h3>
+                <span>{filteredSensors.length} visible</span>
+              </div>
+              <button type="button" onClick={() => setSensorFilter("all")}>View all sensors</button>
+            </div>
+            <div className="security-sensor-toolbar">
+              <label>
+                <LucideIcon name="Search" />
+                <input
+                  value={sensorSearch}
+                  onChange={(event) => setSensorSearch(event.target.value)}
+                  placeholder="Search sensors..."
+                  type="search"
+                />
+              </label>
+              <div>
+                {["all", "active", "closed"].map((filter) => (
+                  <button
+                    className={sensorFilter === filter ? "active" : ""}
+                    type="button"
+                    key={filter}
+                    onClick={() => setSensorFilter(filter)}
+                  >
+                    {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="security-sensor-list">
+              {filteredSensors.map((sensor) => (
+                <article key={sensor.id || sensor.name}>
+                  <div className={`security-row-icon ${sensor.tone}`}>
+                    <LucideIcon name={sensor.icon} />
+                  </div>
+                  <div>
+                    <strong>{sensor.name}</strong>
+                    <span>{sensor.room}</span>
+                  </div>
+                  <small className={sensor.statusTone}>{sensor.status}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
     </section>
   );
