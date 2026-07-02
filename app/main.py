@@ -46,7 +46,7 @@ from .config import (
     TELEGRAM_CHAT_ID,
 )
 from .schemas import PasswordOtpVerify, PasswordResetConfirm, PasswordResetRequest, UserCreate, UserLogin
-from .device_schemas import DeviceCreate, DeviceUpdate
+from .device_schemas import DeviceCreate, DeviceUpdate, RoomDeviceAssignment
 from .device_auth_schemas import DeviceAuthRequest
 from .telemetry_schemas import TelemetryCreate
 from .scene_schemas import SceneCreate, SceneUpdate
@@ -54,6 +54,14 @@ from .rule_schemas import RuleCreate, RuleUpdate
 from .room_schemas import RoomCreate
 from .esp_schemas import EspAuthRequest, EspCommandCompleteRequest, EspModuleCreate, EspModuleUpdate
 from .websocket_manager import manager
+from .gpio_pins import (
+    DEVICE_GPIO_OPTIONS,
+    DHTTYPE,
+    GPIO_PIN_DEFINITIONS,
+    SMART_HOME_ROOMS,
+    get_gpio_option,
+    gpio_payload,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -127,6 +135,10 @@ def ensure_sqlite_schema() -> None:
         }
         if "esp_module_id" not in device_columns:
             conn.execute(text("ALTER TABLE devices ADD COLUMN esp_module_id INTEGER"))
+        if "gpio_key" not in device_columns:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN gpio_key VARCHAR"))
+        if "gpio_pin" not in device_columns:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN gpio_pin INTEGER"))
 
         telemetry_columns = {
             row[1]
@@ -454,6 +466,66 @@ def verify_esp_token(esp_module: models.EspModule, provided_token: str, db: Sess
     return False
 
 
+def normalize_room_name(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).lower()
+
+
+def resolve_smart_home_room(room_name: str) -> str:
+    normalized = normalize_room_name(room_name)
+    for room in SMART_HOME_ROOMS:
+        if normalize_room_name(room) == normalized:
+            return room
+    raise HTTPException(status_code=404, detail="Smart home room not found")
+
+
+def apply_gpio_option(device: models.Device, device_key: str, room_name: str | None = None) -> dict:
+    try:
+        option = get_gpio_option(device_key)
+    except KeyError:
+        raise HTTPException(status_code=400, detail="Unknown GPIO device selection")
+
+    device.name = option["label"]
+    device.device_type = option["device_type"]
+    device.gpio_key = option["device_key"]
+    device.gpio_pin = option["gpio_pin"]
+    if room_name is not None:
+        device.room = room_name
+    return option
+
+
+def serialize_device_gpio(device: models.Device) -> dict:
+    return gpio_payload(device.gpio_key, device.gpio_pin)
+
+
+def serialize_smart_home_device(device: models.Device | None) -> dict | None:
+    if not device:
+        return None
+    return {
+        "device_id": device.id,
+        "device_name": device.name,
+        "device_type": device.device_type,
+        "room": device.room,
+        "state": device.current_state,
+        "device_uid": device.device_uid,
+        **serialize_device_gpio(device),
+        **device_presence(device),
+    }
+
+
+def find_room_gpio_device(db: Session, organization_id: int, room_name: str) -> models.Device | None:
+    devices = (
+        db.query(models.Device)
+        .filter(
+            models.Device.organization_id == organization_id,
+            models.Device.gpio_key != None,
+        )
+        .order_by(models.Device.id.asc())
+        .all()
+    )
+    target = normalize_room_name(room_name)
+    return next((device for device in devices if normalize_room_name(device.room) == target), None)
+
+
 def authenticate_esp_module(esp_data: EspAuthRequest, db: Session) -> models.EspModule:
     esp_module = db.query(models.EspModule).filter(
         models.EspModule.esp_uid == esp_data.esp_uid
@@ -491,6 +563,7 @@ def serialize_child_device(device: models.Device) -> dict:
         "device_uid": device.device_uid,
         "is_active": device.is_active,
         "last_seen": device.last_seen,
+        **serialize_device_gpio(device),
     }
 
 
@@ -969,12 +1042,21 @@ async def register_esp_child_device(
     if not esp_module:
         raise HTTPException(status_code=404, detail="ESP module not found")
 
+    gpio_option = None
+    if device.gpio_key:
+        try:
+            gpio_option = get_gpio_option(device.gpio_key)
+        except KeyError:
+            raise HTTPException(status_code=400, detail="Unknown GPIO device selection")
+
     device_uid = secrets.token_hex(8)
     device_token = secrets.token_hex(32)
     new_device = models.Device(
-        name=device.name,
-        device_type=device.device_type,
+        name=gpio_option["label"] if gpio_option else device.name,
+        device_type=gpio_option["device_type"] if gpio_option else device.device_type,
         room=device.room,
+        gpio_key=gpio_option["device_key"] if gpio_option else None,
+        gpio_pin=gpio_option["gpio_pin"] if gpio_option else None,
         device_uid=device_uid,
         device_token=hash_secret(device_token),
         owner_id=current_user.id,
@@ -994,6 +1076,7 @@ async def register_esp_child_device(
             "esp_uid": esp_module.esp_uid,
             "device_id": new_device.id,
             "device_name": new_device.name,
+            **serialize_device_gpio(new_device),
         },
     )
     db.commit()
@@ -1007,6 +1090,7 @@ async def register_esp_child_device(
         "room": new_device.room,
         "esp_id": esp_module.id,
         "esp_uid": esp_module.esp_uid,
+        **serialize_device_gpio(new_device),
         "organization_id": new_device.organization_id,
     })
 
@@ -1015,6 +1099,7 @@ async def register_esp_child_device(
         "device_uid": new_device.device_uid,
         "device_token": device_token,
         "esp_uid": esp_module.esp_uid,
+        **serialize_device_gpio(new_device),
     }
 
 
@@ -1162,6 +1247,7 @@ async def fetch_esp_commands(esp_data: EspAuthRequest, db: Session = Depends(get
             "device_name": cmd.device.name,
             "command_type": cmd.command_type,
             "payload": cmd.payload,
+            **serialize_device_gpio(cmd.device),
         })
 
     db.commit()
@@ -1231,6 +1317,7 @@ async def complete_esp_command(
                 "device_id": command.device_id,
                 "device_uid": command.device.device_uid,
                 "failure_reason": command.failure_reason,
+                **serialize_device_gpio(command.device),
             },
         )
         db.commit()
@@ -1243,6 +1330,7 @@ async def complete_esp_command(
             "command_type": command.command_type,
             "failure_reason": command.failure_reason,
             "status": "failed",
+            **serialize_device_gpio(command.device),
         })
 
         return {"message": "Command marked as failed"}
@@ -1280,6 +1368,7 @@ async def complete_esp_command(
             "device_id": command.device_id,
             "device_uid": command.device.device_uid,
             "state": command.device.current_state,
+            **serialize_device_gpio(command.device),
         },
     )
     db.commit()
@@ -1293,6 +1382,7 @@ async def complete_esp_command(
         "status": "executed",
         "state": command.device.current_state,
         "executed_at": command.executed_at,
+        **serialize_device_gpio(command.device),
     })
 
     return {"message": "Command completed"}
@@ -1316,10 +1406,19 @@ async def register_device(
         if not esp_module:
             raise HTTPException(status_code=404, detail="ESP module not found")
 
+    gpio_option = None
+    if device.gpio_key:
+        try:
+            gpio_option = get_gpio_option(device.gpio_key)
+        except KeyError:
+            raise HTTPException(status_code=400, detail="Unknown GPIO device selection")
+
     new_device = models.Device(
-        name=device.name,
-        device_type=device.device_type,
+        name=gpio_option["label"] if gpio_option else device.name,
+        device_type=gpio_option["device_type"] if gpio_option else device.device_type,
         room=device.room,
+        gpio_key=gpio_option["device_key"] if gpio_option else None,
+        gpio_pin=gpio_option["gpio_pin"] if gpio_option else None,
         device_uid=device_uid,
         device_token=hash_secret(device_token),
         owner_id=current_user.id,
@@ -1340,6 +1439,7 @@ async def register_device(
             "room": new_device.room,
             "esp_id": esp_module.id if esp_module else None,
             "esp_uid": esp_module.esp_uid if esp_module else None,
+            **serialize_device_gpio(new_device),
         },
     )
     db.commit()
@@ -1353,6 +1453,7 @@ async def register_device(
         "room": new_device.room,
         "esp_id": esp_module.id if esp_module else None,
         "esp_uid": esp_module.esp_uid if esp_module else None,
+        **serialize_device_gpio(new_device),
         "organization_id": new_device.organization_id
     })
 
@@ -1361,6 +1462,7 @@ async def register_device(
         "device_uid": new_device.device_uid,
         "device_token": device_token,
         "esp_uid": esp_module.esp_uid if esp_module else None,
+        **serialize_device_gpio(new_device),
     }
 
 
@@ -1387,6 +1489,12 @@ async def update_device(
             device.device_type = value
         elif field == "room":
             device.room = value
+        elif field == "gpio_key":
+            if value in (None, ""):
+                device.gpio_key = None
+                device.gpio_pin = None
+            else:
+                apply_gpio_option(device, value)
         elif field == "is_active":
             device.is_active = value
         elif field == "esp_uid":
@@ -1415,6 +1523,7 @@ async def update_device(
         "device_id": device.id,
         "device_name": device.name,
         "changes": update_data,
+        **serialize_device_gpio(device),
     })
 
     return {"message": "Device updated"}
@@ -1736,10 +1845,99 @@ def list_devices(
             "esp_id": device.esp_module_id,
             "esp_uid": device.esp_module.esp_uid if device.esp_module else None,
             "esp_name": device.esp_module.name if device.esp_module else None,
+            **serialize_device_gpio(device),
             **device_presence(device, now),
         })
 
     return result
+
+
+def serialize_smart_home_room(db: Session, organization_id: int, room_name: str) -> dict:
+    device = find_room_gpio_device(db, organization_id, room_name)
+    return {
+        "name": room_name,
+        "selected_device_key": device.gpio_key if device else "",
+        "assignment": serialize_smart_home_device(device),
+    }
+
+
+@app.get("/smart-home/gpio")
+def get_smart_home_gpio(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return {
+        "dht_type": DHTTYPE,
+        "pin_definitions": GPIO_PIN_DEFINITIONS,
+        "devices": list(DEVICE_GPIO_OPTIONS.values()),
+        "rooms": [
+            serialize_smart_home_room(db, current_user.organization_id, room_name)
+            for room_name in SMART_HOME_ROOMS
+        ],
+    }
+
+
+@app.put("/smart-home/rooms/{room_name}/device")
+async def assign_smart_home_room_device(
+    room_name: str,
+    assignment: RoomDeviceAssignment,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    resolved_room_name = resolve_smart_home_room(room_name)
+    try:
+        gpio_option = get_gpio_option(assignment.device_key)
+    except KeyError:
+        raise HTTPException(status_code=400, detail="Unknown GPIO device selection")
+
+    device = find_room_gpio_device(db, current_user.organization_id, resolved_room_name)
+    created = False
+
+    if not device:
+        device = models.Device(
+            name=gpio_option["label"],
+            device_type=gpio_option["device_type"],
+            room=resolved_room_name,
+            current_state="OFF" if gpio_option["controllable"] else "ACTIVE",
+            device_uid=secrets.token_hex(8),
+            device_token=hash_secret(secrets.token_hex(32)),
+            owner_id=current_user.id,
+            organization_id=current_user.organization_id,
+        )
+        db.add(device)
+        created = True
+
+    apply_gpio_option(device, assignment.device_key, resolved_room_name)
+    db.flush()
+
+    event_type = "smart_home_device_assigned"
+    record_event(
+        db,
+        event_type,
+        current_user.organization_id,
+        f"{resolved_room_name} assigned to {gpio_option['label']} on GPIO {gpio_option['gpio_pin']}",
+        {
+            "room": resolved_room_name,
+            "device_id": device.id,
+            "device_key": gpio_option["device_key"],
+            "pin_name": gpio_option["pin_name"],
+            "gpio_pin": gpio_option["gpio_pin"],
+            "created": created,
+        },
+    )
+    db.commit()
+    db.refresh(device)
+
+    payload = {
+        "event": event_type,
+        "room": resolved_room_name,
+        "device": serialize_smart_home_device(device),
+        "device_option": gpio_option,
+        "created": created,
+    }
+    await manager.broadcast(payload)
+
+    return payload
 
 
 @app.post("/devices/{device_id}/command")
@@ -1798,6 +1996,7 @@ async def create_command(
             "command_type": command_type,
             "status": command.status,
             "is_online": presence["is_online"],
+            **serialize_device_gpio(device),
         },
     )
     db.commit()
@@ -1813,6 +2012,7 @@ async def create_command(
         "status": command.status,
         "is_online": presence["is_online"],
         "presence_label": presence["presence_label"],
+        **serialize_device_gpio(device),
     })
 
     return {
@@ -1824,6 +2024,7 @@ async def create_command(
         "presence_label": presence["presence_label"],
         "presence_age_seconds": presence["presence_age_seconds"],
         "last_seen": presence["last_seen"],
+        **serialize_device_gpio(device),
     }
 
 
@@ -1886,7 +2087,8 @@ async def fetch_device_commands(
         result.append({
             "command_id": cmd.id,
             "command_type": cmd.command_type,
-            "payload": cmd.payload
+            "payload": cmd.payload,
+            **serialize_device_gpio(device),
         })
 
     db.commit()
@@ -1958,6 +2160,7 @@ async def complete_command(
                 "device_name": device.name,
                 "command_type": command.command_type,
                 "failure_reason": command.failure_reason,
+                **serialize_device_gpio(device),
             },
         )
         db.commit()
@@ -1970,6 +2173,7 @@ async def complete_command(
             "command_type": command.command_type,
             "failure_reason": command.failure_reason,
             "status": "failed",
+            **serialize_device_gpio(device),
         })
 
         return {"message": "Command marked as failed"}
@@ -2009,6 +2213,7 @@ async def complete_command(
             "state": device.current_state,
             "status": command.status,
             "is_online": presence["is_online"],
+            **serialize_device_gpio(device),
         },
     )
     db.commit()
@@ -2023,6 +2228,7 @@ async def complete_command(
         "state": device.current_state,
         "is_online": presence["is_online"],
         "presence_label": presence["presence_label"],
+        **serialize_device_gpio(device),
     })
 
     return {"message": "Command marked as executed"}
@@ -2063,6 +2269,7 @@ def dashboard(
             "device_name": device.name,
             "device_type": device.device_type,
             "state": device.current_state,
+            **serialize_device_gpio(device),
             **device_presence(device),
         })
 

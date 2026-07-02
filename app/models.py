@@ -46,6 +46,8 @@ class Device(Base):
     name = Column(String, nullable=False)
     device_type = Column(String, nullable=False)
     room = Column(String, nullable=True)
+    gpio_key = Column(String, nullable=True)
+    gpio_pin = Column(Integer, nullable=True)
     current_state = Column(String, default="OFF")
 
     device_uid = Column(String, unique=True, index=True, nullable=False)

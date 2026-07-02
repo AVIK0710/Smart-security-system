@@ -1,470 +1,282 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, authHeaders } from "../api/client.js";
 import { useApp } from "../context/AppContext.jsx";
-import DeviceCard from "../components/DeviceCard.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
-import { DEVICE_TYPES, normalizeText, roomIcon, roomImage } from "../utils/helpers.js";
+import { normalizeText } from "../utils/helpers.js";
+
+const SMART_HOME_ROOMS = [
+  {
+    name: "Bedroom",
+    icon: "BedDouble",
+    description: "Comfort, lighting, and presence monitoring.",
+  },
+  {
+    name: "Kitchen",
+    icon: "CookingPot",
+    description: "Safety sensors and alert devices.",
+  },
+  {
+    name: "Bathroom",
+    icon: "Bath",
+    description: "Occupancy and utility automation.",
+  },
+];
+
+function formatPinLabel(device) {
+  if (!device) return "Select a device";
+  return `${device.pin_name} / GPIO ${device.gpio_pin}`;
+}
 
 export default function RoomsView() {
   const {
-    roomEntries,
     devices,
     commandsByDevice,
     sendCommand,
     token,
     toast,
     refreshAll,
-    registerDevice,
-    updateDevice,
-    deleteDevice,
   } = useApp();
-  const [search, setSearch] = useState("");
-  const [layout, setLayout] = useState("grid");
-  const [serverRooms, setServerRooms] = useState([]);
-  const [showForm, setShowForm] = useState(false);
-  const [roomName, setRoomName] = useState("");
-  const [selectedRoom, setSelectedRoom] = useState("");
-  const [detailsDeviceId, setDetailsDeviceId] = useState("");
-  const [editingDeviceId, setEditingDeviceId] = useState("");
-  const [editName, setEditName] = useState("");
-  const [editType, setEditType] = useState("light");
-  const [editRoom, setEditRoom] = useState("");
-  const [newDeviceName, setNewDeviceName] = useState("");
-  const [newDeviceType, setNewDeviceType] = useState("light");
+  const [smartHome, setSmartHome] = useState({
+    pin_definitions: {},
+    devices: [],
+    rooms: [],
+  });
+  const [selectedKeys, setSelectedKeys] = useState({});
+  const [localAssignments, setLocalAssignments] = useState({});
+  const [savingRoom, setSavingRoom] = useState("");
 
-  const loadServerRooms = useCallback(async () => {
+  const loadSmartHome = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await api("/rooms", { headers: authHeaders(token) });
-      setServerRooms(Array.isArray(data) ? data : []);
-    } catch {
-      setServerRooms([]);
+      const data = await api("/smart-home/gpio", {
+        headers: authHeaders(token),
+      });
+      setSmartHome(data);
+      setSelectedKeys(
+        Object.fromEntries(
+          (data.rooms || []).map((room) => [room.name, room.selected_device_key || ""]),
+        ),
+      );
+      setLocalAssignments(
+        Object.fromEntries(
+          (data.rooms || [])
+            .filter((room) => room.assignment)
+            .map((room) => [room.name, room.assignment]),
+        ),
+      );
+    } catch (error) {
+      toast(error.message, "error");
     }
-  }, [token]);
+  }, [token, toast]);
 
   useEffect(() => {
-    loadServerRooms();
-  }, [loadServerRooms]);
+    loadSmartHome();
+  }, [loadSmartHome]);
 
-  const rooms = useMemo(() => {
-    const roomsByName = new Map();
+  const roomCards = useMemo(() => {
+    return SMART_HOME_ROOMS.map((room) => {
+      const deviceFromAppState = devices.find(
+        (device) =>
+          normalizeText(device.room || "") === normalizeText(room.name) &&
+          Boolean(device.gpio_key),
+      );
+      const configRoom = smartHome.rooms.find(
+        (item) => normalizeText(item.name) === normalizeText(room.name),
+      );
+      const assignedDevice =
+        deviceFromAppState ||
+        localAssignments[room.name] ||
+        configRoom?.assignment ||
+        null;
+      const selectedKey =
+        selectedKeys[room.name] ??
+        assignedDevice?.gpio_key ??
+        configRoom?.selected_device_key ??
+        "";
+      const selectedOption = smartHome.devices.find(
+        (device) => device.device_key === selectedKey,
+      );
 
-    roomEntries.forEach((entry) => {
-      roomsByName.set(normalizeText(entry.name), {
-        name: entry.name,
-        count: entry.count,
-        online: entry.online,
-        temperature: entry.temperature,
-        source: "devices",
-      });
+      return {
+        ...room,
+        assignedDevice,
+        selectedKey,
+        selectedOption,
+      };
     });
+  }, [devices, localAssignments, selectedKeys, smartHome]);
 
-    serverRooms.forEach((room) => {
-      const key = normalizeText(room.name);
-      if (!roomsByName.has(key)) {
-        roomsByName.set(key, {
-          name: room.name,
-          count: 0,
-          online: 0,
-          temperature: null,
-          source: "server",
-          room_id: room.room_id,
-        });
-      }
-    });
+  const handleDeviceSelection = async (roomName, deviceKey) => {
+    setSelectedKeys((current) => ({ ...current, [roomName]: deviceKey }));
+    if (!deviceKey) return;
 
-    return Array.from(roomsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [roomEntries, serverRooms]);
-
-  const filteredRooms = rooms.filter((room) =>
-    normalizeText(room.name).includes(normalizeText(search)),
-  );
-
-  const activeRoom = selectedRoom && rooms.find(
-    (room) => normalizeText(room.name) === normalizeText(selectedRoom),
-  );
-
-  const activeRoomDevices = activeRoom
-    ? devices.filter((device) => normalizeText(device.room || "Unassigned") === normalizeText(activeRoom.name))
-    : [];
-
-  const detailsDevice = activeRoomDevices.find(
-    (device) => String(device.device_id) === String(detailsDeviceId),
-  );
-
-  const canDeleteRoom = (room) => normalizeText(room.name) !== "unassigned";
-
-  const handleAddRoom = async (event) => {
-    event.preventDefault();
-    const nextRoom = roomName.trim();
-    if (!nextRoom || !token) return;
-
-    const exists = rooms.some((room) => normalizeText(room.name) === normalizeText(nextRoom));
-    if (!exists) {
-      try {
-        await api("/rooms", {
-          method: "POST",
-          headers: authHeaders(token, { "Content-Type": "application/json" }),
-          body: JSON.stringify({ name: nextRoom }),
-        });
-        await loadServerRooms();
-        await refreshAll(token, { force: true });
-      } catch (error) {
-        toast(error.message);
-        return;
-      }
-    }
-
-    setSelectedRoom(nextRoom);
-    setRoomName("");
-    setShowForm(false);
-  };
-
-  const handleAddDevice = async (event) => {
-    event.preventDefault();
-    if (!activeRoom || !newDeviceName.trim()) return;
-
-    await registerDevice({
-      name: newDeviceName.trim(),
-      device_type: newDeviceType,
-      room: activeRoom.name,
-    });
-    setNewDeviceName("");
-    setNewDeviceType("light");
-  };
-
-  const handleStartEdit = (device) => {
-    setDetailsDeviceId("");
-    setEditingDeviceId(String(device.device_id));
-    setEditName(device.device_name);
-    setEditType(device.device_type);
-    setEditRoom(device.room || activeRoom?.name || "");
-  };
-
-  const handleSaveDevice = async (event) => {
-    event.preventDefault();
-    if (!editingDeviceId || !editName.trim()) return;
-
-    await updateDevice(Number(editingDeviceId), {
-      name: editName.trim(),
-      device_type: editType,
-      room: editRoom.trim() || null,
-    });
-    setEditingDeviceId("");
-  };
-
-  const handleDeleteDevice = async (device) => {
-    if (!window.confirm(`Delete ${device.device_name}? Rules, telemetry, and scene actions for it will also be removed.`)) return;
-    await deleteDevice(device.device_id);
-    if (detailsDeviceId === String(device.device_id)) setDetailsDeviceId("");
-    if (editingDeviceId === String(device.device_id)) setEditingDeviceId("");
-  };
-
-  const handleDeleteRoom = async (room) => {
-    const roomDevices = devices.filter(
-      (device) => normalizeText(device.room || "Unassigned") === normalizeText(room.name),
-    );
-    const message = roomDevices.length
-      ? `Delete ${room.name}? ${roomDevices.length} device${roomDevices.length === 1 ? "" : "s"} in this room will also be deleted.`
-      : `Delete ${room.name}?`;
-
-    if (!window.confirm(message)) return;
-
+    setSavingRoom(roomName);
     try {
-      for (const device of roomDevices) {
-        await api(`/devices/${device.device_id}`, {
-          method: "DELETE",
-          headers: authHeaders(token),
-        });
-      }
-
-      if (room.room_id && token) {
-        await api(`/rooms/${room.room_id}`, {
-          method: "DELETE",
-          headers: authHeaders(token),
-        });
-        setServerRooms((current) => current.filter((item) => item.room_id !== room.room_id));
-      }
+      const result = await api(`/smart-home/rooms/${encodeURIComponent(roomName)}/device`, {
+        method: "PUT",
+        headers: authHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ device_key: deviceKey }),
+      });
+      setLocalAssignments((current) => ({
+        ...current,
+        [roomName]: result.device,
+      }));
+      setSmartHome((current) => ({
+        ...current,
+        rooms: current.rooms.map((room) =>
+          normalizeText(room.name) === normalizeText(roomName)
+            ? {
+                ...room,
+                selected_device_key: result.device.gpio_key,
+                assignment: result.device,
+              }
+            : room,
+        ),
+      }));
+      await refreshAll(token, { force: true });
+      toast(
+        `${roomName} now uses ${result.device.gpio_label} on ${result.device.gpio_pin_name} / GPIO ${result.device.gpio_pin}`,
+        "success",
+      );
     } catch (error) {
-      toast(error.message);
-      return;
+      toast(error.message, "error");
+      await loadSmartHome();
+    } finally {
+      setSavingRoom("");
     }
+  };
 
-    setSelectedRoom("");
-    setDetailsDeviceId("");
-    setEditingDeviceId("");
-    await loadServerRooms();
-    await refreshAll(token, { force: true });
-    toast(`${room.name} deleted`);
+  const handleControl = (room) => {
+    if (!room.assignedDevice?.device_id || !room.selectedOption?.controllable) return;
+    const isOn = String(room.assignedDevice.state || "").toUpperCase() === "ON";
+    sendCommand(room.assignedDevice.device_id, isOn ? "TURN_OFF" : "TURN_ON", "room");
   };
 
   return (
-    <section className="view active rooms-page">
-      <div className="rooms-actions">
-        <label className="rooms-search" aria-label="Search rooms">
-          <LucideIcon name="Search" />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search rooms..."
-            type="search"
-          />
-        </label>
-        <div className="rooms-view-toggle" aria-label="Room view mode">
-          <button
-            className={layout === "grid" ? "active" : ""}
-            type="button"
-            title="Grid view"
-            onClick={() => setLayout("grid")}
-          >
-            <LucideIcon name="LayoutDashboard" />
-          </button>
-          <button
-            className={layout === "list" ? "active" : ""}
-            type="button"
-            title="List view"
-            onClick={() => setLayout("list")}
-          >
-            <LucideIcon name="List" />
-          </button>
+    <section className="view active rooms-page smart-room-page">
+      <section className="smart-room-hero">
+        <div>
+          <p>ESP32 Smart Home</p>
+          <h3>Bedroom, Kitchen, and Bathroom GPIO assignments</h3>
+          <span>
+            Choose a device for each room. The backend stores the matching ESP32 pin and uses it for control commands.
+          </span>
         </div>
-        <button className="btn rooms-add" type="button" onClick={() => setShowForm((value) => !value)}>
-          <LucideIcon name="Plus" />
-          <span>Add Room</span>
-        </button>
-      </div>
+        <div className="smart-room-sync">
+          <LucideIcon name="Cpu" />
+          <strong>{smartHome.devices.length}</strong>
+          <span>mapped devices</span>
+        </div>
+      </section>
 
-      {showForm ? (
-        <form className="rooms-add-form" onSubmit={handleAddRoom}>
-          <div className="field">
-            <label htmlFor="newRoomName">Room name</label>
-            <input
-              id="newRoomName"
-              value={roomName}
-              onChange={(event) => setRoomName(event.target.value)}
-              placeholder="Study Room"
-              required
-            />
+      <section className="gpio-definition-panel" aria-label="ESP32 GPIO pin definitions">
+        <div className="gpio-definition-title">
+          <LucideIcon name="CircuitBoard" />
+          <span>Required GPIO pin definitions</span>
+        </div>
+        <div className="gpio-chip-grid">
+          <div className="gpio-chip">
+            <strong>DHTTYPE</strong>
+            <span>{smartHome.dht_type || "DHT11"}</span>
           </div>
-          <button className="btn" type="submit">
-            <LucideIcon name="Save" />
-            <span>Save Room</span>
-          </button>
-          <button className="btn secondary" type="button" onClick={() => setShowForm(false)}>
-            Cancel
-          </button>
-        </form>
-      ) : null}
-
-      <div className={`rooms-gallery ${layout}`}>
-        {filteredRooms.length ? filteredRooms.map((room) => (
-          <article className="rooms-gallery-card" key={room.name}>
-            <div className="rooms-gallery-photo">
-              <img src={roomImage(room.name)} alt="" />
-              <div className="rooms-gallery-icon">
-                <LucideIcon name={roomIcon(room.name)} />
-              </div>
+          {Object.entries(smartHome.pin_definitions).map(([pinName, gpio]) => (
+            <div className="gpio-chip" key={pinName}>
+              <strong>{pinName}</strong>
+              <span>GPIO {gpio}</span>
             </div>
-            <div className="rooms-gallery-body">
-              <div>
-                <h3>{room.name}</h3>
-                <span><LucideIcon name="PanelTop" /> {room.count} Device{room.count === 1 ? "" : "s"}</span>
+          ))}
+        </div>
+      </section>
+
+      <section className="smart-room-grid" aria-label="Smart home rooms">
+        {roomCards.map((room) => {
+          const isSaving = savingRoom === room.name;
+          const isControllable = Boolean(room.selectedOption?.controllable && room.assignedDevice?.device_id);
+          const isOn = String(room.assignedDevice?.state || "").toUpperCase() === "ON";
+          const latestCommand = commandsByDevice[room.assignedDevice?.device_id]?.[0];
+
+          return (
+            <article className="smart-room-card" key={room.name}>
+              <div className="smart-room-card-head">
+                <div className="smart-room-icon">
+                  <LucideIcon name={room.icon} />
+                </div>
+                <div>
+                  <h3>{room.name}</h3>
+                  <p>{room.description}</p>
+                </div>
+              </div>
+
+              <label className="smart-room-field">
+                <span>Assigned device or sensor</span>
+                <select
+                  value={room.selectedKey}
+                  onChange={(event) => handleDeviceSelection(room.name, event.target.value)}
+                  disabled={isSaving}
+                >
+                  <option value="">Select device...</option>
+                  {smartHome.devices.map((device) => (
+                    <option key={device.device_key} value={device.device_key}>
+                      {device.label} - GPIO {device.gpio_pin}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="smart-room-device-strip">
+                <div>
+                  <span>GPIO</span>
+                  <strong>{room.selectedOption ? `GPIO ${room.selectedOption.gpio_pin}` : "--"}</strong>
+                </div>
+                <div>
+                  <span>Pin</span>
+                  <strong>{room.selectedOption?.pin_name || "--"}</strong>
+                </div>
+                <div>
+                  <span>Mode</span>
+                  <strong>{room.selectedOption?.controllable ? "Control" : "Sensor"}</strong>
+                </div>
+              </div>
+
+              <div className="smart-room-state">
+                <div>
+                  <span>Backend mapping</span>
+                  <strong>{formatPinLabel(room.selectedOption)}</strong>
+                </div>
                 <small>
-                  <i className={room.count > 0 && room.online === 0 ? "offline" : ""} />
-                  {room.count === 0
-                    ? "No devices assigned"
-                    : room.online === room.count
-                    ? "All Online"
-                    : `${room.online} Online`}
+                  {room.assignedDevice
+                    ? `${room.assignedDevice.gpio_label} is saved for ${room.name}.`
+                    : "Select a dropdown value to save this room assignment."}
                 </small>
               </div>
-              <strong>{room.count}</strong>
-            </div>
-            <div className="rooms-card-actions">
-              <button className="btn secondary" type="button" onClick={() => setSelectedRoom(room.name)}>
-                <LucideIcon name="Eye" />
-                <span>Manage</span>
+
+              <button
+                className={`btn smart-room-control ${isOn ? "is-on" : ""}`}
+                type="button"
+                disabled={!isControllable || isSaving}
+                onClick={() => handleControl(room)}
+              >
+                <LucideIcon name={isControllable ? (isOn ? "PowerOff" : "Power") : "Activity"} />
+                <span>
+                  {isSaving
+                    ? "Saving..."
+                    : isControllable
+                    ? `${isOn ? "Turn off" : "Turn on"} ${room.selectedOption.label}`
+                    : room.selectedOption
+                    ? `${room.selectedOption.label} is sensor-only`
+                    : "Select a device first"}
+                </span>
               </button>
-              {canDeleteRoom(room) ? (
-                <button className="btn danger" type="button" onClick={() => handleDeleteRoom(room)}>
-                  <LucideIcon name="Trash2" />
-                  <span>Delete Room</span>
-                </button>
-              ) : null}
-            </div>
-          </article>
-        )) : (
-          <div className="empty">
-            {search ? "No rooms match your search" : "Add a room or assign devices to rooms"}
-          </div>
-        )}
-      </div>
 
-      {activeRoom ? (
-        <section className="panel pad room-manager">
-          <div className="section-head">
-            <div>
-              <h3>{activeRoom.name}</h3>
-              <span>{activeRoomDevices.length} device{activeRoomDevices.length === 1 ? "" : "s"} assigned</span>
-            </div>
-            <div className="card-actions">
-              {canDeleteRoom(activeRoom) ? (
-                <button className="btn danger" type="button" onClick={() => handleDeleteRoom(activeRoom)}>
-                  <LucideIcon name="Trash2" />
-                  <span>Delete Room</span>
-                </button>
-              ) : null}
-              <button className="btn secondary" type="button" onClick={() => setSelectedRoom("")}>
-                <LucideIcon name="X" />
-                <span>Close</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="room-manager-grid">
-            <div className="room-device-list">
-              {activeRoomDevices.length ? activeRoomDevices.map((device) => (
-                <div className="managed-card" key={device.device_id}>
-                  <DeviceCard
-                    device={device}
-                    commands={commandsByDevice[device.device_id] || []}
-                    onCommand={sendCommand}
-                  />
-                  <div className="card-actions">
-                    <button className="btn secondary" type="button" onClick={() => setDetailsDeviceId(String(device.device_id))}>
-                      <LucideIcon name="Eye" />
-                      <span>View</span>
-                    </button>
-                    <button className="btn secondary" type="button" onClick={() => handleStartEdit(device)}>
-                      <LucideIcon name="Pencil" />
-                      <span>Edit</span>
-                    </button>
-                    <button className="btn danger" type="button" onClick={() => handleDeleteDevice(device)}>
-                      <LucideIcon name="Trash2" />
-                      <span>Delete</span>
-                    </button>
-                  </div>
-                </div>
-              )) : (
-                <div className="empty">Add a device to this room</div>
-              )}
-            </div>
-
-            <aside className="room-side-panel">
-              {detailsDevice ? (
-                <div className="room-device-details">
-                  <div className="section-head compact">
-                    <div>
-                      <h3>{detailsDevice.device_name}</h3>
-                      <span>{detailsDevice.device_type}</span>
-                    </div>
-                    <button className="btn icon secondary" type="button" onClick={() => setDetailsDeviceId("")} title="Close details">
-                      <LucideIcon name="X" />
-                    </button>
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>State</dt>
-                      <dd>{detailsDevice.state}</dd>
-                    </div>
-                    <div>
-                      <dt>Status</dt>
-                      <dd>{detailsDevice.presence_label || (detailsDevice.is_online ? "Online" : "Offline")}</dd>
-                    </div>
-                    <div>
-                      <dt>UID</dt>
-                      <dd>{detailsDevice.device_uid}</dd>
-                    </div>
-                  </dl>
+              {latestCommand ? (
+                <div className="smart-room-command-note">
+                  {latestCommand.command_type} - {latestCommand.status}
                 </div>
               ) : null}
-
-              {editingDeviceId ? (
-                <form className="form-grid room-device-form" onSubmit={handleSaveDevice}>
-                  <div className="field full">
-                    <label htmlFor="editDeviceName">Device name</label>
-                    <input
-                      id="editDeviceName"
-                      value={editName}
-                      onChange={(event) => setEditName(event.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="editDeviceType">Type</label>
-                    <select
-                      id="editDeviceType"
-                      value={editType}
-                      onChange={(event) => setEditType(event.target.value)}
-                    >
-                      {DEVICE_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="editDeviceRoom">Room</label>
-                    <input
-                      id="editDeviceRoom"
-                      value={editRoom}
-                      onChange={(event) => setEditRoom(event.target.value)}
-                    />
-                  </div>
-                  <div className="field full room-form-actions">
-                    <button className="btn" type="submit">
-                      <LucideIcon name="Save" />
-                      <span>Save Device</span>
-                    </button>
-                    <button className="btn secondary" type="button" onClick={() => setEditingDeviceId("")}>
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <form className="form-grid room-device-form" onSubmit={handleAddDevice}>
-                  <div className="section-head compact full">
-                    <div>
-                      <h3>Add Device</h3>
-                      <span>Registers it in {activeRoom.name}</span>
-                    </div>
-                  </div>
-                  <div className="field full">
-                    <label htmlFor="roomDeviceName">Device name</label>
-                    <input
-                      id="roomDeviceName"
-                      value={newDeviceName}
-                      onChange={(event) => setNewDeviceName(event.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="field full">
-                    <label htmlFor="roomDeviceType">Type</label>
-                    <select
-                      id="roomDeviceType"
-                      value={newDeviceType}
-                      onChange={(event) => setNewDeviceType(event.target.value)}
-                    >
-                      {DEVICE_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field full">
-                    <button className="btn" type="submit">
-                      <LucideIcon name="Plus" />
-                      <span>Add Device</span>
-                    </button>
-                  </div>
-                </form>
-              )}
-            </aside>
-          </div>
-        </section>
-      ) : null}
+            </article>
+          );
+        })}
+      </section>
     </section>
   );
 }
