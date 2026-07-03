@@ -3,6 +3,7 @@ import { api, authHeaders } from "../api/client.js";
 import { useApp } from "../context/AppContext.jsx";
 import LucideIcon from "../components/LucideIcon.jsx";
 import { normalizeText } from "../utils/helpers.js";
+import { formatKwh } from "../utils/energyUtils.js";
 
 const SMART_HOME_ROOMS = [
   {
@@ -30,6 +31,8 @@ function formatPinLabel(device) {
 export default function RoomsView() {
   const {
     devices,
+    roomEntries,
+    energySummary,
     commandsByDevice,
     sendCommand,
     token,
@@ -75,6 +78,12 @@ export default function RoomsView() {
 
   const roomCards = useMemo(() => {
     return SMART_HOME_ROOMS.map((room) => {
+      const roomDevices = devices.filter(
+        (device) => normalizeText(device.room || "") === normalizeText(room.name),
+      );
+      const roomEntry = roomEntries.find(
+        (entry) => normalizeText(entry.name) === normalizeText(room.name),
+      );
       const deviceFromAppState = devices.find(
         (device) =>
           normalizeText(device.room || "") === normalizeText(room.name) &&
@@ -99,12 +108,21 @@ export default function RoomsView() {
 
       return {
         ...room,
+        roomDevices,
+        temperature: roomEntry?.temperature ?? null,
+        onlineDevices: roomDevices.filter((device) => device.is_online).length,
+        lightCount: roomDevices.filter((device) =>
+          normalizeText(`${device.device_name} ${device.device_type}`).includes("light"),
+        ).length,
+        sensorCount: roomDevices.filter((device) =>
+          normalizeText(`${device.device_name} ${device.device_type}`).includes("sensor"),
+        ).length,
         assignedDevice,
         selectedKey,
         selectedOption,
       };
     });
-  }, [devices, localAssignments, selectedKeys, smartHome]);
+  }, [devices, localAssignments, roomEntries, selectedKeys, smartHome]);
 
   const handleDeviceSelection = async (roomName, deviceKey) => {
     setSelectedKeys((current) => ({ ...current, [roomName]: deviceKey }));
@@ -156,35 +174,23 @@ export default function RoomsView() {
     <section className="view active rooms-page smart-room-page">
       <section className="smart-room-hero">
         <div>
-          <p>ESP32 Smart Home</p>
-          <h3>Bedroom, Kitchen, and Bathroom GPIO assignments</h3>
+          <p>Smart Home</p>
+          <h3>Room control center</h3>
           <span>
-            Choose a device for each room. The backend stores the matching ESP32 pin and uses it for control commands.
+            Manage comfort, safety, devices, and automation for Bedroom, Kitchen, and Bathroom from one polished surface.
           </span>
         </div>
-        <div className="smart-room-sync">
-          <LucideIcon name="Cpu" />
-          <strong>{smartHome.devices.length}</strong>
-          <span>mapped devices</span>
-        </div>
-      </section>
-
-      <section className="gpio-definition-panel" aria-label="ESP32 GPIO pin definitions">
-        <div className="gpio-definition-title">
-          <LucideIcon name="CircuitBoard" />
-          <span>Required GPIO pin definitions</span>
-        </div>
-        <div className="gpio-chip-grid">
-          <div className="gpio-chip">
-            <strong>DHTTYPE</strong>
-            <span>{smartHome.dht_type || "DHT11"}</span>
+        <div className="smart-room-hero-grid">
+          <div className="smart-room-sync">
+            <LucideIcon name="ShieldCheck" />
+            <strong>{devices.filter((device) => device.is_online).length}</strong>
+            <span>online devices</span>
           </div>
-          {Object.entries(smartHome.pin_definitions).map(([pinName, gpio]) => (
-            <div className="gpio-chip" key={pinName}>
-              <strong>{pinName}</strong>
-              <span>GPIO {gpio}</span>
-            </div>
-          ))}
+          <div className="smart-room-sync warning">
+            <LucideIcon name="Zap" />
+            <strong>{formatKwh(energySummary?.current_kw ?? 0)}</strong>
+            <span>kW live load</span>
+          </div>
         </div>
       </section>
 
@@ -194,6 +200,12 @@ export default function RoomsView() {
           const isControllable = Boolean(room.selectedOption?.controllable && room.assignedDevice?.device_id);
           const isOn = String(room.assignedDevice?.state || "").toUpperCase() === "ON";
           const latestCommand = commandsByDevice[room.assignedDevice?.device_id]?.[0];
+          const powerLabel = room.roomDevices.length
+            ? `${Math.max(room.lightCount * 12 + room.sensorCount * 2, 2)} W est.`
+            : "No load";
+          const motionLabel = room.roomDevices.some((device) =>
+            normalizeText(`${device.device_name} ${device.device_type}`).includes("motion"),
+          ) ? "Monitored" : "Idle";
 
           return (
             <article className="smart-room-card" key={room.name}>
@@ -207,8 +219,27 @@ export default function RoomsView() {
                 </div>
               </div>
 
+              <div className="smart-room-glance">
+                <div>
+                  <span>Temperature</span>
+                  <strong>{room.temperature != null ? `${room.temperature}°C` : "--"}</strong>
+                </div>
+                <div>
+                  <span>Humidity</span>
+                  <strong>{room.selectedOption?.device_key === "dht11" ? "Live" : "--"}</strong>
+                </div>
+                <div>
+                  <span>Power</span>
+                  <strong>{powerLabel}</strong>
+                </div>
+                <div>
+                  <span>Motion</span>
+                  <strong>{motionLabel}</strong>
+                </div>
+              </div>
+
               <label className="smart-room-field">
-                <span>Assigned device or sensor</span>
+                <span>Primary device or sensor</span>
                 <select
                   value={room.selectedKey}
                   onChange={(event) => handleDeviceSelection(room.name, event.target.value)}
@@ -223,60 +254,111 @@ export default function RoomsView() {
                 </select>
               </label>
 
-              <div className="smart-room-device-strip">
+              <div className="smart-room-health-row">
                 <div>
-                  <span>GPIO</span>
-                  <strong>{room.selectedOption ? `GPIO ${room.selectedOption.gpio_pin}` : "--"}</strong>
+                  <span className="green-dot" />
+                  <strong>{room.onlineDevices}/{room.roomDevices.length || 0}</strong>
+                  <small>devices online</small>
                 </div>
                 <div>
-                  <span>Pin</span>
-                  <strong>{room.selectedOption?.pin_name || "--"}</strong>
+                  <LucideIcon name="Lightbulb" />
+                  <strong>{room.lightCount}</strong>
+                  <small>lights</small>
                 </div>
                 <div>
-                  <span>Mode</span>
-                  <strong>{room.selectedOption?.controllable ? "Control" : "Sensor"}</strong>
+                  <LucideIcon name="Radar" />
+                  <strong>{room.sensorCount}</strong>
+                  <small>sensors</small>
                 </div>
               </div>
 
-              <div className="smart-room-state">
-                <div>
-                  <span>Backend mapping</span>
-                  <strong>{formatPinLabel(room.selectedOption)}</strong>
-                </div>
-                <small>
-                  {room.assignedDevice
-                    ? `${room.assignedDevice.gpio_label} is saved for ${room.name}.`
-                    : "Select a dropdown value to save this room assignment."}
-                </small>
+              <div className="smart-room-actions">
+                <button
+                  className={`btn smart-room-control ${isOn ? "is-on" : ""}`}
+                  type="button"
+                  disabled={!isControllable || isSaving}
+                  onClick={() => handleControl(room)}
+                >
+                  <LucideIcon name={isControllable ? (isOn ? "PowerOff" : "Power") : "Activity"} />
+                  <span>
+                    {isSaving
+                      ? "Saving..."
+                      : isControllable
+                      ? `${isOn ? "Turn off" : "Turn on"}`
+                      : room.selectedOption
+                      ? "Monitoring"
+                      : "Select device"}
+                  </span>
+                </button>
+                <button className="btn secondary smart-room-control" type="button" disabled>
+                  <LucideIcon name="Workflow" />
+                  <span>Automation</span>
+                </button>
               </div>
-
-              <button
-                className={`btn smart-room-control ${isOn ? "is-on" : ""}`}
-                type="button"
-                disabled={!isControllable || isSaving}
-                onClick={() => handleControl(room)}
-              >
-                <LucideIcon name={isControllable ? (isOn ? "PowerOff" : "Power") : "Activity"} />
-                <span>
-                  {isSaving
-                    ? "Saving..."
-                    : isControllable
-                    ? `${isOn ? "Turn off" : "Turn on"} ${room.selectedOption.label}`
-                    : room.selectedOption
-                    ? `${room.selectedOption.label} is sensor-only`
-                    : "Select a device first"}
-                </span>
-              </button>
 
               {latestCommand ? (
                 <div className="smart-room-command-note">
                   {latestCommand.command_type} - {latestCommand.status}
                 </div>
               ) : null}
+
+              <details className="smart-room-advanced">
+                <summary>
+                  <span>Advanced GPIO settings</span>
+                  <LucideIcon name="ChevronDown" />
+                </summary>
+                <div className="smart-room-state">
+                  <div>
+                    <span>Backend mapping</span>
+                    <strong>{formatPinLabel(room.selectedOption)}</strong>
+                  </div>
+                  <small>
+                    {room.assignedDevice
+                      ? `${room.assignedDevice.gpio_label} is saved for ${room.name}.`
+                      : "Select a dropdown value to save this room assignment."}
+                  </small>
+                </div>
+                <div className="smart-room-device-strip">
+                  <div>
+                    <span>GPIO</span>
+                    <strong>{room.selectedOption ? `GPIO ${room.selectedOption.gpio_pin}` : "--"}</strong>
+                  </div>
+                  <div>
+                    <span>Pin</span>
+                    <strong>{room.selectedOption?.pin_name || "--"}</strong>
+                  </div>
+                  <div>
+                    <span>Mode</span>
+                    <strong>{room.selectedOption?.controllable ? "Control" : "Sensor"}</strong>
+                  </div>
+                </div>
+              </details>
             </article>
           );
         })}
       </section>
+
+      <details className="gpio-definition-panel smart-room-advanced-global" aria-label="ESP32 GPIO pin definitions">
+        <summary>
+          <span>
+            <LucideIcon name="CircuitBoard" />
+            ESP32 pin definitions
+          </span>
+          <LucideIcon name="ChevronDown" />
+        </summary>
+        <div className="gpio-chip-grid">
+          <div className="gpio-chip">
+            <strong>DHTTYPE</strong>
+            <span>{smartHome.dht_type || "DHT11"}</span>
+          </div>
+          {Object.entries(smartHome.pin_definitions).map(([pinName, gpio]) => (
+            <div className="gpio-chip" key={pinName}>
+              <strong>{pinName}</strong>
+              <span>GPIO {gpio}</span>
+            </div>
+          ))}
+        </div>
+      </details>
     </section>
   );
 }

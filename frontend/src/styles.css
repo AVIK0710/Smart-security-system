@@ -8661,3 +8661,742 @@ body.smart-home-dark-mode .energy-reference-page {
 .room-summary-card small i.offline {
   background: #ef4444;
 }
+
+/* Premium smart home design layer */
+:root {
+  --premium-bg: #f3f7fb;
+  --premium-ink: #07122f;
+  --premium-muted: #647089;
+  --premium-card: rgba(255, 255, 255, 0.92);
+  --premium-card-solid: #ffffff;
+  --premium-line: rgba(129, 151, 181, 0.28);
+  --premium-blue: #2563ff;
+  --premium-green: #16a66a;
+  --premium-orange: #f97316;
+  --premium-red: #ef4444;
+  --premium-purple: #7c3aed;
+  --premium-yellow: #f5b301;
+  --premium-shadow: 0 24px 70px rgba(23, 38, 71, 0.12);
+  --premium-soft-shadow: 0 12px 34px rgba(23, 38, 71, 0.09);
+  --premium-radius-lg: 20px;
+  --premium-radius-md: 16px;
+  --premium-radius-sm: 12px;
+}
+
+body {
+  background:
+    linear-gradient(135deg, rgba(37, 99, 255, 0.08), rgba(22, 166, 106, 0.04) 38%, rgba(245, 179, 1, 0.07)),
+    var(--premium-bg);
+  color: var(--premium-ink);
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  letter-spacing: 0;
+}
+
+.main {
+  padding: 28px 30px 32px 42px;
+}
+
+.view.active {
+  animation: premiumPageIn 420ms ease both;
+}
+
+@keyframes premiumPageIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-title h2 {
+  color: var(--premium-ink);
+  font-size: clamp(32px, 4vw, 44px);
+  font-weight: 950;
+  line-height: 0.98;
+}
+
+.page-title p {
+  max-width: 720px;
+  color: var(--premium-muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.topbar {
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+
+.top-status,
+.devices-online-pill,
+.connection-pill {
+  border-color: var(--premium-line);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.panel,
+.dashboard-card,
+.metric-strip,
+.energy-overview-card,
+.automation-status-card,
+.live-camera-card,
+.quick-actions-card,
+.recent-activity-card,
+.devices-reference-page,
+.energy-reference-page,
+.rooms-gallery-card,
+.smart-room-card,
+.security-status-card,
+.security-camera-panel,
+.security-sensor-card,
+.automation-card,
+.settings-card,
+.account-card {
+  border: 1px solid var(--premium-line);
+  border-radius: var(--premium-radius-lg);
+  background: var(--premium-card);
+  box-shadow: var(--premium-soft-shadow);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.panel:hover,
+.dashboard-card:hover,
+.energy-overview-card:hover,
+.live-camera-card:hover,
+.quick-actions-card:hover,
+.recent-activity-card:hover,
+.devices-reference-page:hover,
+.rooms-gallery-card:hover,
+.smart-room-card:hover,
+.reference-device-card:hover,
+.energy-stat-card:hover,
+.security-camera-card:hover,
+.automation-rule-card:hover,
+.automation-scene-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--premium-shadow);
+  border-color: rgba(37, 99, 255, 0.22);
+}
+
+.btn,
+.devices-add-btn,
+.power-btn,
+.reference-toggle,
+.automation-add,
+.schedules-add {
+  min-height: 44px;
+  border-radius: var(--premium-radius-sm);
+  font-weight: 850;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease,
+    opacity 160ms ease;
+}
+
+.btn:hover,
+.devices-add-btn:hover,
+.power-btn:hover,
+.automation-add:hover,
+.schedules-add:hover {
+  transform: translateY(-1px);
+}
+
+.btn:focus-visible,
+.devices-add-btn:focus-visible,
+.round-btn:focus-visible,
+.notification-btn:focus-visible,
+.nav button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(37, 99, 255, 0.28);
+  outline-offset: 3px;
+}
+
+.btn.secondary,
+.devices-add-btn.secondary-action {
+  border: 1px solid var(--premium-line);
+  background: #f8fbff;
+  color: var(--premium-ink);
+  box-shadow: none;
+}
+
+.btn.danger {
+  background: linear-gradient(180deg, #f05252, #dc2626);
+}
+
+.empty {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 180px;
+  padding: 28px;
+  border: 1px dashed rgba(129, 151, 181, 0.5);
+  border-radius: var(--premium-radius-lg);
+  background:
+    linear-gradient(135deg, rgba(37, 99, 255, 0.06), rgba(22, 166, 106, 0.05)),
+    rgba(255, 255, 255, 0.68);
+  color: var(--premium-muted);
+  text-align: center;
+  font-weight: 750;
+}
+
+.empty::before {
+  content: "";
+  display: block;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 255, 0.18), rgba(22, 166, 106, 0.16)),
+    #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 255, 0.12);
+}
+
+.dashboard-home {
+  display: grid;
+  gap: 24px;
+}
+
+.room-summary-row {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.room-summary-card {
+  min-height: 170px;
+  padding: 20px;
+  border: 1px solid var(--premium-line);
+  border-radius: var(--premium-radius-lg);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.88)),
+    #ffffff;
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.room-summary-card:nth-child(2n) .summary-icon {
+  background: rgba(22, 166, 106, 0.12);
+  color: var(--premium-green);
+}
+
+.room-summary-card:nth-child(3n) .summary-icon {
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--premium-orange);
+}
+
+.room-summary-card h3,
+.section-head h3,
+.energy-title h3,
+.quick-actions-card h3,
+.recent-activity-card h3 {
+  color: var(--premium-ink);
+  font-weight: 920;
+}
+
+.metric-strip {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  padding: 16px;
+}
+
+.metric-tile {
+  min-height: 142px;
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, #ffffff, #f6f9ff);
+  border: 1px solid rgba(129, 151, 181, 0.22);
+}
+
+.metric-tile:nth-child(2) svg {
+  color: var(--premium-green);
+}
+
+.metric-tile:nth-child(3) svg {
+  color: var(--premium-orange);
+}
+
+.metric-tile:nth-child(4) svg {
+  color: var(--premium-red);
+}
+
+.energy-chart,
+.energy-line-chart {
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(37, 99, 255, 0.06), rgba(22, 166, 106, 0.04)),
+    #f8fbff;
+}
+
+.quick-actions-grid button {
+  border: 1px solid rgba(129, 151, 181, 0.24);
+  border-radius: 16px;
+  background: #f8fbff;
+  box-shadow: none;
+}
+
+.quick-actions-grid button:nth-child(2) svg {
+  color: var(--premium-purple);
+}
+
+.quick-actions-grid button:nth-child(3) svg {
+  color: var(--premium-orange);
+}
+
+.quick-actions-grid button:nth-child(4) svg {
+  color: var(--premium-yellow);
+}
+
+.activity-row {
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.devices-reference-page {
+  padding: 28px;
+}
+
+.devices-reference-header {
+  align-items: center;
+}
+
+.devices-reference-title h2 {
+  font-size: clamp(34px, 4vw, 46px);
+  line-height: 1;
+}
+
+.devices-reference-title p,
+.devices-reference-search input {
+  color: var(--premium-muted);
+}
+
+.devices-tabs {
+  gap: 8px;
+}
+
+.devices-tabs button {
+  min-height: 54px;
+  border-radius: 14px;
+}
+
+.devices-tabs button.active {
+  background: #eef5ff;
+  color: var(--premium-blue);
+}
+
+.reference-device-card {
+  border: 1px solid var(--premium-line);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, #ffffff, #f8fbff);
+  box-shadow: var(--premium-soft-shadow);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.reference-status.green,
+.reference-device-icon.green {
+  color: var(--premium-green);
+}
+
+.reference-status.amber,
+.reference-device-icon.amber {
+  color: var(--premium-yellow);
+}
+
+.reference-status.purple,
+.reference-device-icon.purple {
+  color: var(--premium-purple);
+}
+
+.reference-status.red,
+.reference-device-icon.red {
+  color: var(--premium-red);
+}
+
+.energy-stat-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.energy-stat-card {
+  min-height: 150px;
+  border: 1px solid var(--premium-line);
+  border-radius: 20px;
+  background: var(--premium-card-solid);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.energy-stat-icon.green {
+  background: rgba(22, 166, 106, 0.12);
+  color: var(--premium-green);
+}
+
+.energy-stat-icon.amber {
+  background: rgba(245, 179, 1, 0.14);
+  color: #b77900;
+}
+
+.energy-usage-card,
+.energy-device-card {
+  border: 1px solid var(--premium-line);
+  border-radius: 22px;
+  background: var(--premium-card-solid);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.energy-range-tabs {
+  border-radius: 14px;
+  background: #f3f7fb;
+}
+
+.energy-range-tabs button.active {
+  color: var(--premium-blue);
+  background: #ffffff;
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.security-page,
+.view-security,
+.view-automation,
+.view-schedules {
+  display: grid;
+  gap: 22px;
+}
+
+.security-mode-card,
+.security-camera-card,
+.security-alert-card,
+.security-device-card,
+.motion-event-card,
+.automation-rule-card,
+.automation-scene-card,
+.automation-integration-card {
+  border: 1px solid var(--premium-line);
+  border-radius: 20px;
+  background: var(--premium-card-solid);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.security-mode-card,
+.security-status-card {
+  background:
+    linear-gradient(135deg, rgba(22, 166, 106, 0.1), rgba(37, 99, 255, 0.08)),
+    #ffffff;
+}
+
+.automation-page {
+  gap: 22px;
+}
+
+.automation-tools,
+.automation-create-panel,
+.automation-list,
+.automation-timeline,
+.automation-history {
+  border-radius: 20px;
+}
+
+.automation-tabs {
+  border: 1px solid var(--premium-line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.automation-tabs button.active {
+  background: #ffffff;
+  color: var(--premium-purple);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.settings-page,
+.account-page {
+  display: grid;
+  gap: 22px;
+}
+
+.settings-section,
+.settings-panel,
+.account-profile-card,
+.account-menu-card,
+.account-stat-card {
+  border: 1px solid var(--premium-line);
+  border-radius: 20px;
+  background: var(--premium-card-solid);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+/* Premium rooms page */
+.smart-room-page {
+  gap: 22px;
+}
+
+.smart-room-hero {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 218px;
+  padding: 32px;
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 255, 0.12), rgba(22, 166, 106, 0.08)),
+    #ffffff;
+  box-shadow: var(--premium-shadow);
+}
+
+.smart-room-hero h3 {
+  max-width: 760px;
+  font-size: clamp(36px, 5vw, 56px);
+}
+
+.smart-room-hero-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.smart-room-sync {
+  min-width: 148px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.smart-room-sync.warning svg {
+  color: var(--premium-yellow);
+}
+
+.smart-room-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.smart-room-card {
+  align-content: start;
+  padding: 22px;
+  border-radius: 24px;
+  background:
+    linear-gradient(150deg, #ffffff, #f8fbff);
+}
+
+.smart-room-card:nth-child(2) .smart-room-icon {
+  background: rgba(245, 179, 1, 0.14);
+  color: #b77900;
+}
+
+.smart-room-card:nth-child(3) .smart-room-icon {
+  background: rgba(124, 58, 237, 0.12);
+  color: var(--premium-purple);
+}
+
+.smart-room-glance {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.smart-room-glance div,
+.smart-room-health-row div,
+.smart-room-state,
+.smart-room-device-strip div {
+  border: 1px solid rgba(129, 151, 181, 0.24);
+  border-radius: 16px;
+  background: rgba(248, 251, 255, 0.9);
+}
+
+.smart-room-glance div {
+  min-height: 76px;
+  padding: 12px;
+}
+
+.smart-room-glance span,
+.smart-room-health-row small {
+  color: var(--premium-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.smart-room-glance strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--premium-ink);
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.smart-room-health-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.smart-room-health-row div {
+  display: grid;
+  gap: 5px;
+  justify-items: start;
+  min-height: 82px;
+  padding: 12px;
+}
+
+.smart-room-health-row svg {
+  width: 18px;
+  height: 18px;
+  color: var(--premium-blue);
+}
+
+.smart-room-health-row strong {
+  color: var(--premium-ink);
+  font-size: 18px;
+}
+
+.smart-room-field select {
+  border-color: rgba(37, 99, 255, 0.2);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.smart-room-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.smart-room-control {
+  min-width: 0;
+}
+
+.smart-room-advanced,
+.smart-room-advanced-global {
+  border: 1px solid rgba(129, 151, 181, 0.24);
+  border-radius: 18px;
+  background: rgba(248, 251, 255, 0.82);
+}
+
+.smart-room-advanced summary,
+.smart-room-advanced-global summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 16px;
+  color: var(--premium-ink);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.smart-room-advanced summary::-webkit-details-marker,
+.smart-room-advanced-global summary::-webkit-details-marker {
+  display: none;
+}
+
+.smart-room-advanced[open] summary svg,
+.smart-room-advanced-global[open] summary > svg {
+  transform: rotate(180deg);
+}
+
+.smart-room-advanced summary svg,
+.smart-room-advanced-global summary svg {
+  width: 18px;
+  height: 18px;
+  transition: transform 180ms ease;
+}
+
+.smart-room-advanced .smart-room-state,
+.smart-room-advanced .smart-room-device-strip {
+  margin: 0 14px 14px;
+}
+
+.smart-room-advanced-global {
+  padding: 0;
+  background: var(--premium-card);
+  box-shadow: var(--premium-soft-shadow);
+}
+
+.smart-room-advanced-global summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.smart-room-advanced-global .gpio-chip-grid {
+  padding: 0 18px 18px;
+}
+
+.gpio-chip-grid {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+
+.gpio-chip {
+  background: #ffffff;
+  border-radius: 16px;
+}
+
+@media (max-width: 1180px) {
+  .main {
+    padding: 24px;
+  }
+
+  .dashboard-columns,
+  .energy-dashboard-grid,
+  .devices-reference-header {
+    grid-template-columns: 1fr;
+  }
+
+  .smart-room-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .main {
+    padding: 18px;
+  }
+
+  .topbar,
+  .toolbar,
+  .smart-room-hero,
+  .devices-reference-nav,
+  .automation-tools {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .smart-room-hero-grid,
+  .smart-room-grid,
+  .smart-room-glance,
+  .smart-room-health-row,
+  .smart-room-actions,
+  .metric-strip,
+  .energy-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .smart-room-card,
+  .smart-room-hero,
+  .devices-reference-page,
+  .energy-reference-page {
+    padding: 18px;
+  }
+
+  .page-title h2 {
+    font-size: 32px;
+  }
+}
